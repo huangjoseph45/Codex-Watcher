@@ -1,0 +1,28 @@
+{
+  "refreshIntervalSeconds": 15,
+  "refreshIntervalOptionsSeconds": [1, 2, 5, 15, 30, 60],
+  "codexHome": null,
+  "databaseBusyTimeoutMilliseconds": 250,
+  "liveStatusTimeoutMilliseconds": 2000,
+  "showMenuBarSessionCount": false,
+  "menuBarPreferredPosition": 240,
+  "fontSize": 16,
+  "attention": {
+    "enabled": true,
+    "autoShowBubble": true,
+    "playSound": false,
+    "bubbleWidth": 340,
+    "bubbleHeight": 360,
+    "notificationWidth": 300,
+    "notificationHeight": 132,
+    "autoDismissSeconds": 6,
+    "requestTimeoutMilliseconds": 3000
+  },
+  "window": {
+    "width": 440,
+    "height": 520,
+    "minimumWidth": 360,
+    "minimumHeight": 300,
+    "scale": 0.85
+  }
+}
