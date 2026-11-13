@@ -7,6 +7,7 @@ struct AttentionBubbleView: View {
     let sessionID: String
     let onOpenSession: (CodexSession) -> Void
     let onDismiss: () -> Void
+    var showDetails = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -24,13 +25,13 @@ struct AttentionBubbleView: View {
                 }
                 .padding(16)
                 Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        if let prompt = session.pendingPrompt {
+                VStack(alignment: .leading, spacing: 14) {
+                        if let prompt = session.pendingPrompt, showDetails {
                             PromptForm(store: store, prompt: prompt, onDismiss: onDismiss,
                                        onOpenSession: { onOpenSession(session) }).id(prompt.id)
                         } else {
-                            Text(session.promptNotice ?? "Open this session to review and respond to its request.")
+                            Text(showDetails ? (session.promptNotice ?? "Open this session to review and respond to its request.")
+                                 : "This request is too large to fit on screen. Open the session to review it in full.")
                                 .foregroundStyle(.secondary)
                             HStack {
                                 Button("Later", action: onDismiss).keyboardShortcut(.cancelAction)
@@ -47,9 +48,8 @@ struct AttentionBubbleView: View {
                         if let feedback = store.promptFeedback, store.promptMessageID == session.pendingPrompt?.id {
                             Text(feedback).foregroundStyle(.secondary)
                         }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(16)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading).padding(16)
             } else {
                 Text("This session is no longer active.").padding()
                 Button("Close", action: onDismiss).padding()
@@ -58,6 +58,7 @@ struct AttentionBubbleView: View {
         .buttonStyle(PromptActionButtonStyle())
         .font(.system(size: store.configuration.textSize - 1))
         .tint(.primary).background(.background)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

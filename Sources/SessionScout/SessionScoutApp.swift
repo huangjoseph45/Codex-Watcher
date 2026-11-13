@@ -23,12 +23,16 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private var attentionSessionID: String?
     private var attentionDismissTask: Task<Void, Never>?
     private var attentionIsCompact = false
+    private var displayedPromptIdentity: String?
     private var attentionQueue: [String] = []
     private var attentionTracker = AttentionTracker()
+    private var completionTracker = CompletionTracker()
+    private var completionWasAudible = false
+    private var announcedCompletedTurns: Set<String> = []
     private var store: SessionStore?
     private var screenChangeTask: Task<Void, Never>?
-    // Retain the existing autosave name and bundle ID so positions and settings survive the rename.
-    private static let statusItemName = "CodexWatcherStatus"
+    // Let AppKit place this with ordinary app items, then remember Command-drag moves.
+    private static let statusItemName = "SessionScoutStatus"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -63,16 +67,10 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         scheduleVisibilityCheck()
     }
 
-    private func createStatusItem(resetPosition: Bool = false) {
+    private func createStatusItem() {
         guard let store else { return }
         if let old = statusItem { NSStatusBar.system.removeStatusItem(old) }
         statusItem = nil
-        let positionKey = "NSStatusItem Preferred Position \(Self.statusItemName)"
-        // Seed AppKit's saved position once; preserve subsequent Command-drag moves.
-        // A display change repairs it only when the item is offscreen or under a notch.
-        if resetPosition || UserDefaults.standard.object(forKey: positionKey) == nil {
-            UserDefaults.standard.set(store.configuration.statusItemPosition, forKey: positionKey)
-        }
         let item = NSStatusBar.system.statusItem(withLength: store.configuration.menuBarShowsCount
             ? NSStatusItem.variableLength : NSStatusItem.squareLength)
         item.autosaveName = Self.statusItemName
@@ -96,29 +94,11 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             do { try await Task.sleep(for: .milliseconds(500)) }
             catch { return }
             guard let self else { return }
-            if !self.statusItemHasUsablePosition {
-                self.popover.performClose(nil)
-                self.attentionDismissTask?.cancel()
-                self.attentionPopover.performClose(nil)
-                self.createStatusItem(resetPosition: true)
-                do { try await Task.sleep(for: .milliseconds(500)) }
-                catch { return }
-            }
-            NSLog("Session Scout status item: usable=%@, frame=%@", String(self.statusItemHasUsablePosition),
-                  NSStringFromRect(self.statusItem?.button?.window?.frame ?? .zero))
+            // AppKit's status-item window can use virtual coordinates on mirrored
+            // menu bars. Let the system move it; do not reorder it from those frames.
+            self.statusItem?.isVisible = true
+            self.updateStatusItem()
             if self.store?.configuration.attentionSettings.autoShowBubble == true { self.showNextAttention() }
-        }
-    }
-
-    private var statusItemHasUsablePosition: Bool {
-        guard let item = statusItem, item.isVisible,
-              let frame = item.button?.window?.frame, !frame.isEmpty else { return false }
-        return NSScreen.screens.contains { screen in
-            guard screen.frame.contains(frame) else { return false }
-            guard let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea else {
-                return true
-            }
-            return frame.maxX <= left.maxX || frame.minX >= right.minX
         }
     }
 
@@ -137,11 +117,14 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         withObservationTracking {
             _ = store.sessions
             _ = store.error
+            _ = store.completionSoundEnabled
+            _ = store.soundVolume
             updateStatusItem()
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.observeStatus()
                 self?.processAttention()
+                self?.processCompletions()
             }
         }
     }
@@ -156,18 +139,54 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             attentionSessionID = nil
         }
         let incoming = attentionTracker.update(store.sessions)
+        if let id = attentionSessionID, !attentionIsCompact, attentionPopover.isShown,
+           let session = store.sessions.first(where: { $0.id == id }),
+           session.activity.needsAttention, session.pendingPrompt?.id != displayedPromptIdentity {
+            showAttention(for: id)
+        }
         for id in incoming where id != attentionSessionID && !attentionQueue.contains(id) { attentionQueue.append(id) }
-        if !incoming.isEmpty, store.configuration.attentionSettings.playSound { NSSound.beep() }
+        if !incoming.isEmpty, store.actionSoundEnabled {
+            store.notificationSounds.play(.actionRequired, volume: store.soundVolume)
+        }
         if store.configuration.attentionSettings.autoShowBubble { showNextAttention() }
     }
 
     private func showNextAttention() {
-        guard !popover.isShown, !attentionPopover.isShown, statusItemHasUsablePosition else { return }
+        guard !popover.isShown, !attentionPopover.isShown, statusItem?.isVisible == true else { return }
         for (index, id) in attentionQueue.enumerated() {
             guard store?.sessions.contains(where: { $0.id == id && $0.activity.needsAttention }) == true else { continue }
             attentionQueue.remove(at: index)
             showAttention(for: id, compact: true)
             return
+        }
+    }
+
+    private func processCompletions() {
+        guard let store else { return }
+        let audible = store.completionSoundEnabled && store.soundVolume > 0
+        if audible && !completionWasAudible { completionTracker = CompletionTracker() }
+        completionWasAudible = audible
+        let candidates = completionTracker.update(store.sessions)
+        guard audible, !candidates.isEmpty else { return }
+        let reader = CompletedTurnReader(home: store.home, timeoutMilliseconds: store.configuration.statusTimeout)
+        Task { @MainActor [weak self, weak store] in
+            var confirmed: [String] = []
+            var notificationIDs: Set<String> = []
+            for candidate in candidates {
+                if let turn = try? await Task.detached(priority: .utility, operation: {
+                    try reader.latestCompletedTurnID(threadID: candidate.threadID)
+                }).value {
+                    let identity = "\(candidate.threadID):\(turn)"
+                    confirmed.append(identity)
+                    if candidate.shouldNotify { notificationIDs.insert(identity) }
+                }
+            }
+            guard let self, let store else { return }
+            let fresh = notificationIDs.filter { !self.announcedCompletedTurns.contains($0) }
+            self.announcedCompletedTurns.formUnion(confirmed)
+            if !fresh.isEmpty, store.completionSoundEnabled {
+                store.notificationSounds.play(.turnFinished, volume: store.soundVolume)
+            }
         }
     }
 
@@ -180,6 +199,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         attentionQueue.removeAll { $0 == sessionID }
         attentionSessionID = sessionID
         attentionIsCompact = compact
+        displayedPromptIdentity = store.sessions.first(where: { $0.id == sessionID })?.pendingPrompt?.id
         store.promptError = nil
         store.promptFeedback = nil
         store.navigationError = nil
@@ -200,14 +220,23 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             scheduleAttentionDismissal(sessionID: sessionID)
             return
         }
-        attentionPopover.contentSize = NSSize(width: settings.bubbleWidth, height: settings.bubbleHeight)
-        attentionPopover.contentViewController = NSHostingController(rootView:
-            AttentionBubbleView(store: store, sessionID: sessionID,
+        func content(showDetails: Bool) -> AnyView {
+            AnyView(AttentionBubbleView(store: store, sessionID: sessionID,
                 onOpenSession: { [weak self] session in self?.focusSession(session) },
-                onDismiss: { [weak self] in
-                    self?.dismissAttention()
-                })
-                .frame(width: settings.bubbleWidth, height: settings.bubbleHeight))
+                onDismiss: { [weak self] in self?.dismissAttention() }, showDetails: showDetails)
+                .frame(width: settings.bubbleWidth).fixedSize(horizontal: false, vertical: true))
+        }
+        let host = NSHostingController(rootView: content(showDetails: true))
+        host.sizingOptions = [.preferredContentSize]
+        host.view.layoutSubtreeIfNeeded()
+        let maximumHeight = (button.window?.screen ?? NSScreen.main)?.visibleFrame.height ?? 700
+        if host.view.fittingSize.height > maximumHeight - 60 {
+            host.rootView = content(showDetails: false)
+            host.view.layoutSubtreeIfNeeded()
+        }
+        attentionPopover.contentViewController = host
+        attentionPopover.contentSize = host.view.fittingSize
+        NSLog("Session Scout request popup size=%@", NSStringFromSize(attentionPopover.contentSize))
         // Present without activating the app or taking focus from the user's current work.
         attentionPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
@@ -304,6 +333,10 @@ final class SessionStore {
     var refreshing = false
     var home: URL
     private(set) var refreshIntervalSeconds: Double
+    private(set) var actionSoundEnabled: Bool
+    private(set) var completionSoundEnabled: Bool
+    private(set) var soundVolume: Double
+    let notificationSounds = NotificationSounds()
     let configuration: AppConfiguration
     let configurationWarning: String?
     private var monitoringTask: Task<Void, Never>?
@@ -324,6 +357,13 @@ final class SessionStore {
     fileprivate init(settings: StartupSettings) {
         configuration = settings.configuration
         configurationWarning = settings.warning
+        actionSoundEnabled = UserDefaults.standard.object(forKey: "actionSoundEnabled") as? Bool
+            ?? configuration.soundSettings.actionRequiredEnabled
+        completionSoundEnabled = UserDefaults.standard.object(forKey: "completionSoundEnabled") as? Bool
+            ?? configuration.soundSettings.turnFinishedEnabled
+        if let saved = UserDefaults.standard.object(forKey: "soundVolume") as? Double, saved.isFinite, (0...1).contains(saved) {
+            soundVolume = saved
+        } else { soundVolume = configuration.soundSettings.volume }
         if let saved = UserDefaults.standard.object(forKey: "refreshIntervalSeconds") as? Double,
            saved.isFinite, (1...3600).contains(saved) {
             refreshIntervalSeconds = saved
@@ -371,6 +411,22 @@ final class SessionStore {
         UserDefaults.standard.removeObject(forKey: "refreshIntervalSeconds")
         refreshIntervalSeconds = configuration.refreshIntervalSeconds
         restartMonitoring()
+    }
+
+    func setActionSoundEnabled(_ enabled: Bool) {
+        actionSoundEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "actionSoundEnabled")
+    }
+
+    func setCompletionSoundEnabled(_ enabled: Bool) {
+        completionSoundEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "completionSoundEnabled")
+    }
+
+    func setSoundVolume(_ volume: Double) {
+        guard volume.isFinite, (0...1).contains(volume) else { return }
+        soundVolume = volume
+        UserDefaults.standard.set(volume, forKey: "soundVolume")
     }
 
     private func restartMonitoring() {
@@ -534,7 +590,7 @@ struct ContentView: View {
                         .disabled(store.refreshing)
                     Spacer()
                     SettingsMenu(store: store)
-                    Button { NSApplication.shared.terminate(nil) } label: { QuitIcon() }
+                    Button { NSApplication.shared.terminate(nil) } label: { QuitIcon(size: fontSize + 4) }
                         .keyboardShortcut("q")
                         .help("Quit Session Scout (⌘Q)")
                         .accessibilityLabel("Quit Session Scout")

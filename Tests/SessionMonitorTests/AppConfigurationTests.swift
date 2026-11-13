@@ -27,6 +27,11 @@ final class AppConfigurationTests: XCTestCase {
         XCTAssertThrowsError(try read { $0["refreshIntervalSeconds"] = 0 })
         XCTAssertThrowsError(try read { $0["refreshIntervalOptionsSeconds"] = [0, 1] })
         XCTAssertThrowsError(try read { $0["refreshIntervalOptionsSeconds"] = [1, 1] })
+        XCTAssertThrowsError(try read {
+            var sounds = $0["sounds"] as! [String: Any]
+            sounds["volume"] = 1.1
+            $0["sounds"] = sounds
+        })
         XCTAssertThrowsError(try read { $0["databaseBusyTimeoutMilliseconds"] = -1 })
         XCTAssertThrowsError(try read { $0["liveStatusTimeoutMilliseconds"] = 0 })
         XCTAssertThrowsError(try read { $0["codexHome"] = " " })

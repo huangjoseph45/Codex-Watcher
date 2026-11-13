@@ -22,14 +22,18 @@ struct SettingsMenu: View {
                     store.resetRefreshInterval()
                 }
             }
+            SoundSettingsMenu(store: store)
         } label: {
             Image(systemName: "gearshape")
+                .font(.system(size: store.configuration.textSize + 2))
+                .frame(width: store.configuration.textSize + 4, height: store.configuration.textSize + 4)
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).controlSize(.regular).fixedSize()
         .help("Settings").accessibilityLabel("Settings")
     }
 
     private func intervalLabel(_ seconds: Double) -> String {
         seconds == 1 ? "1 second" : "\(seconds.formatted()) seconds"
     }
+
 }

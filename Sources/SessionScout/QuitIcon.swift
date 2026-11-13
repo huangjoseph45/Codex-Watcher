@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct QuitIcon: View {
+    let size: Double
     private static let image: NSImage? = {
         let url = Bundle.main.url(forResource: "quit", withExtension: "svg")
             ?? Bundle.module.url(forResource: "quit", withExtension: "svg")
@@ -14,7 +15,7 @@ struct QuitIcon: View {
     var body: some View {
         if let image = Self.image {
             Image(nsImage: image).renderingMode(.template)
-                .resizable().scaledToFit().frame(width: 16, height: 16)
+                .resizable().scaledToFit().frame(width: size, height: size)
                 .accessibilityHidden(true)
         }
     }

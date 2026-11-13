@@ -5,14 +5,17 @@
   "databaseBusyTimeoutMilliseconds": 250,
   "liveStatusTimeoutMilliseconds": 2000,
   "showMenuBarSessionCount": false,
-  "menuBarPreferredPosition": 240,
   "fontSize": 16,
+  "sounds": {
+    "actionRequiredEnabled": true,
+    "turnFinishedEnabled": true,
+    "volume": 0.25,
+    "volumeOptions": [0, 0.1, 0.25, 0.5, 0.75, 1]
+  },
   "attention": {
     "enabled": true,
     "autoShowBubble": true,
-    "playSound": false,
     "bubbleWidth": 340,
-    "bubbleHeight": 360,
     "notificationWidth": 300,
     "notificationHeight": 132,
     "autoDismissSeconds": 6,

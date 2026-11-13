@@ -13,6 +13,8 @@ cp "$BIN_DIR/SessionScout" "$APP/Contents/MacOS/SessionScout"
 cp "Sources/SessionMonitor/Resources/config.json" "$APP/Contents/Resources/config.json"
 cp "Sources/SessionScout/Resources/quit.svg" "$APP/Contents/Resources/quit.svg"
 cp "Sources/SessionScout/Resources/scout.svg" "$APP/Contents/Resources/scout.svg"
+cp "Sources/SessionScout/Resources/action-required.wav" "$APP/Contents/Resources/action-required.wav"
+cp "Sources/SessionScout/Resources/turn-finished.wav" "$APP/Contents/Resources/turn-finished.wav"
 cp "Assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
