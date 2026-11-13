@@ -60,6 +60,11 @@ public struct AppConfiguration: Codable, Sendable {
 
     public static var userConfigURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/SessionScout/config.json")
+    }
+
+    public static var legacyUserConfigURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/CodexWatcher/config.json")
     }
 

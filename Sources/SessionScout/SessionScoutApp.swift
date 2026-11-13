@@ -3,7 +3,7 @@ import AppKit
 import SessionMonitor
 
 @main
-enum CodexWatcherApp {
+enum SessionScoutApp {
     @MainActor
     static func main() {
         let application = NSApplication.shared
@@ -27,6 +27,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private var attentionTracker = AttentionTracker()
     private var store: SessionStore?
     private var screenChangeTask: Task<Void, Never>?
+    // Retain the existing autosave name and bundle ID so positions and settings survive the rename.
     private static let statusItemName = "CodexWatcherStatus"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -78,12 +79,13 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         item.isVisible = true
         statusItem = item
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: "Codex Watcher")
+            button.image = ScoutIcon.image
+                ?? NSImage(systemSymbolName: "binoculars", accessibilityDescription: "Session Scout")
             button.image?.isTemplate = true
             button.imagePosition = .imageLeading
             button.target = self
             button.action = #selector(togglePopover)
-            button.setAccessibilityLabel("Codex Watcher")
+            button.setAccessibilityLabel("Session Scout")
         }
         updateStatusItem()
     }
@@ -102,7 +104,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
                 do { try await Task.sleep(for: .milliseconds(500)) }
                 catch { return }
             }
-            NSLog("Codex Watcher status item: usable=%@, frame=%@", String(self.statusItemHasUsablePosition),
+            NSLog("Session Scout status item: usable=%@, frame=%@", String(self.statusItemHasUsablePosition),
                   NSStringFromRect(self.statusItem?.button?.window?.frame ?? .zero))
             if self.store?.configuration.attentionSettings.autoShowBubble == true { self.showNextAttention() }
         }
@@ -124,10 +126,10 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         guard let store else { return }
         statusItem?.button?.title = store.configuration.menuBarShowsCount
             ? (store.error == nil ? "\(store.sessions.count)" : "!") : ""
-        statusItem?.button?.toolTip = "Codex Watcher — \(store.sessions.count) active sessions"
+        statusItem?.button?.toolTip = "Session Scout — \(store.sessions.count) active sessions"
         let waiting = store.sessions.filter { $0.activity.needsAttention }.count
         statusItem?.button?.contentTintColor = waiting > 0 ? .systemOrange : nil
-        if waiting > 0 { statusItem?.button?.toolTip = "Codex Watcher — \(waiting) session(s) need input" }
+        if waiting > 0 { statusItem?.button?.toolTip = "Session Scout — \(waiting) session(s) need input" }
     }
 
     private func observeStatus() {
@@ -267,9 +269,14 @@ private struct StartupSettings {
     let warning: String?
 
     static func load() -> Self {
-        let customPath = ProcessInfo.processInfo.environment["CODEX_WATCHER_CONFIG"]
+        let environment = ProcessInfo.processInfo.environment
+        let customPath = environment["SESSION_SCOUT_CONFIG"] ?? environment["CODEX_WATCHER_CONFIG"]
+        let defaultURL = FileManager.default.fileExists(atPath: AppConfiguration.userConfigURL.path)
+            ? AppConfiguration.userConfigURL
+            : (FileManager.default.fileExists(atPath: AppConfiguration.legacyUserConfigURL.path)
+                ? AppConfiguration.legacyUserConfigURL : AppConfiguration.userConfigURL)
         let url = customPath.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) }
-            ?? AppConfiguration.userConfigURL
+            ?? defaultURL
         guard customPath != nil || FileManager.default.fileExists(atPath: url.path) else {
             return Self(configuration: .bundled, warning: nil)
         }
@@ -424,11 +431,11 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: fontSize + 6))
+                ScoutIcon()
+                    .frame(width: fontSize + 8, height: fontSize + 8)
                     .foregroundStyle(.orange)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Codex Watcher").font(.system(size: fontSize + 6, weight: .semibold)).lineLimit(1)
+                    Text("Session Scout").font(.system(size: fontSize + 6, weight: .semibold)).lineLimit(1)
                     HStack(spacing: 6) {
                         Text("Active local sessions").foregroundStyle(.secondary)
                         Text("\(store.sessions.count)")
@@ -470,7 +477,11 @@ struct ContentView: View {
                 Spacer()
             } else if store.sessions.isEmpty {
                 ContentUnavailableView {
-                    Label(store.error == nil ? "No active sessions" : "Sessions unavailable", systemImage: "terminal")
+                    Label {
+                        Text(store.error == nil ? "No active sessions" : "Sessions unavailable")
+                    } icon: {
+                        ScoutIcon().frame(width: 32, height: 32)
+                    }
                 } description: {
                     Text(store.error == nil ? "Open a local Codex session. It will appear here automatically." : "Check your Codex home folder and file permissions, then refresh.")
                 }
@@ -525,8 +536,8 @@ struct ContentView: View {
                     SettingsMenu(store: store)
                     Button { NSApplication.shared.terminate(nil) } label: { QuitIcon() }
                         .keyboardShortcut("q")
-                        .help("Quit Codex Watcher (⌘Q)")
-                        .accessibilityLabel("Quit Codex Watcher")
+                        .help("Quit Session Scout (⌘Q)")
+                        .accessibilityLabel("Quit Session Scout")
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.orange)

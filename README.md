@@ -1,8 +1,8 @@
-# Codex Watcher
+# Session Scout
 
-<img src="Assets/AppIcon.png" alt="Codex Watcher app icon" width="96" />
+<img src="Assets/AppIcon.png" alt="Session Scout app icon" width="96" />
 
-A native SwiftUI macOS menu bar app that lists active local Codex sessions. It refreshes every 15 seconds by default, including while the dropdown is closed. Click the terminal icon in the menu bar to view titles, working folders, sources, and IDs. Requires macOS 14 or newer and Xcode 16 or newer (Swift 6).
+A native SwiftUI macOS menu bar app that lists active local Codex sessions. It refreshes every 15 seconds by default, including while the dropdown is closed. Click the lookout flag icon in the menu bar to view titles, working folders, sources, and IDs. Requires macOS 14 or newer and Xcode 16 or newer (Swift 6).
 
 The app runs without a Dock icon or main window. The dropdown includes Refresh, Folder, Settings, and a power icon to Quit; right-click a session to copy its ID. The footer hides during permission requests. Hover over truncated text to read it in full. The menu bar icon stays compact by default; hover over it for the session count, or enable `showMenuBarSessionCount` to display the count alongside it (or `!` on scan errors).
 
@@ -24,11 +24,11 @@ Build a launchable app:
 bash scripts/run-app.sh
 ```
 
-For development, open `Package.swift` in Xcode and run the `CodexWatcher` executable scheme, or use `swift run CodexWatcher`.
+For development, open `Package.swift` in Xcode and run the `SessionScout` executable scheme, or use `swift run SessionScout`. The built app is `dist/Session Scout.app`.
 
 The launch script builds the app, quits any running copy, and opens the new build. Opening the `.app` directly while an older copy is running reuses that process. To build without launching, use `bash scripts/build-app.sh`.
 
-The app icon is bundled as `AppIcon.icns`. Its editable source is [`Assets/AppIcon.svg`](Assets/AppIcon.svg); run `bash scripts/build-icon.sh` to regenerate the PNG preview and macOS icon sizes. App builds regenerate the icon when its source changes. Rendering uses native macOS tools and does not require additional dependencies.
+The app icon uses a lookout tower and an orange signal flag. The same mark appears in the dropdown header and as a monochrome menu bar icon. The app icon is bundled as `AppIcon.icns`; its editable source is [`Assets/AppIcon.svg`](Assets/AppIcon.svg), and the compact glyph is [`scout.svg`](Sources/SessionScout/Resources/scout.svg). Run `bash scripts/build-icon.sh` to regenerate the PNG preview and macOS icon sizes. App builds regenerate the icon when its source changes. Rendering uses native macOS tools and does not require additional dependencies.
 
 The app defaults to `~/.codex`, honors `CODEX_HOME` when launched from a shell, and remembers a custom folder chosen using the toolbar's folder button. Finder launches generally don't inherit shell environment variables, so use the folder button for a custom home.
 
@@ -36,7 +36,7 @@ The app defaults to `~/.codex`, honors `CODEX_HOME` when launched from a shell, 
 
 App settings live in [`Sources/SessionMonitor/Resources/config.json`](Sources/SessionMonitor/Resources/config.json): refresh interval, optional Codex home path, database busy timeout, menu bar count visibility, and dropdown dimensions (`window.width` and `window.height`). `window.scale` defaults to `0.85`, scaling the entire interface, including text, spacing, and controls, down by 15%. The final dropdown dimensions are width and height multiplied by scale (374 × 442 points by default). The existing `window` configuration key is retained for compatibility; its minimum dimensions remain validation bounds for the unscaled size. Older configs without the new keys inherit their bundled defaults. Edit this file and rebuild to change bundled defaults.
 
-To customize settings without rebuilding, copy that JSON file to `~/Library/Application Support/CodexWatcher/config.json`, edit it, and relaunch the app. Alternatively, set `CODEX_WATCHER_CONFIG` to the path of a complete config file when launching from a shell. Invalid config files produce a visible warning and fall back to bundled settings.
+To customize settings without rebuilding, copy that JSON file to `~/Library/Application Support/SessionScout/config.json`, edit it, and relaunch the app. Alternatively, set `SESSION_SCOUT_CONFIG` to the path of a complete config file when launching from a shell. The previous `CodexWatcher` config folder and `CODEX_WATCHER_CONFIG` variable are still accepted. The app retains its existing bundle identifier and menu position name so saved preferences survive the rename. Invalid config files produce a visible warning and fall back to bundled settings.
 
 `codexHome: null` uses the remembered folder, then `CODEX_HOME`, then `~/.codex`. A configured path takes priority at startup; the folder picker can change it for the current run. Refresh intervals must be at least one second; database timeouts are in milliseconds. Window dimensions are in points. Visual styling and Codex protocol filenames remain implementation constants.
 

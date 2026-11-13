@@ -11,10 +11,10 @@ repeat 100 times
     tell application id "com.codexwatcher.app" to quit
     delay 0.1
 end repeat
-if application id "com.codexwatcher.app" is running then error "Codex Watcher did not quit. Close it and try again."
+if application id "com.codexwatcher.app" is running then error "Session Scout did not quit. Close it and try again."
 APPLESCRIPT
 
-LOG_PATH="${TMPDIR:-/tmp}/codex-watcher.log"
-open -n --stdout "$LOG_PATH" --stderr "$LOG_PATH" "$PWD/dist/Codex Watcher.app"
-echo "Launched Codex Watcher. Look for the terminal icon in the menu bar."
+LOG_PATH="${TMPDIR:-/tmp}/session-scout.log"
+open -n --stdout "$LOG_PATH" --stderr "$LOG_PATH" "$PWD/dist/Session Scout.app"
+echo "Launched Session Scout. Look for the lookout flag icon in the menu bar."
 echo "Startup log: $LOG_PATH"

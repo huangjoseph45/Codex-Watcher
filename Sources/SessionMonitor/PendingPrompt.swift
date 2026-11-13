@@ -144,7 +144,7 @@ public struct PromptClient: Sendable {
         let connection = try LocalWebSocket.connect(to: home.appendingPathComponent("app-server-control/app-server-control.sock"),
                                                      timeoutMilliseconds: timeoutMilliseconds)
         _ = try connection.request(id: 1, method: "initialize", params: [
-            "clientInfo": ["name": "codex_watcher", "version": "0.1.0"],
+            "clientInfo": ["name": "session_scout", "version": "0.1.0"],
             "capabilities": ["experimentalApi": true, "requiredHumanApproval": true]
         ])
         try connection.sendJSON(["method": "initialized"])

@@ -6,7 +6,7 @@ struct QuitIcon: View {
         let url = Bundle.main.url(forResource: "quit", withExtension: "svg")
             ?? Bundle.module.url(forResource: "quit", withExtension: "svg")
         let image = url.flatMap { NSImage(contentsOf: $0) }
-            ?? NSImage(systemSymbolName: "power", accessibilityDescription: "Quit Codex Watcher")
+            ?? NSImage(systemSymbolName: "power", accessibilityDescription: "Quit Session Scout")
         image?.isTemplate = true
         return image
     }()

@@ -56,7 +56,7 @@ struct LiveStatusReader {
             let socket = home.appendingPathComponent("app-server-control/app-server-control.sock")
             let connection = try LocalWebSocket.connect(to: socket, timeoutMilliseconds: timeoutMilliseconds)
             _ = try connection.request(id: 1, method: "initialize", params: [
-                "clientInfo": ["name": "codex_watcher", "version": "0.1.0"]
+                "clientInfo": ["name": "session_scout", "version": "0.1.0"]
             ])
             try connection.sendJSON(["method": "initialized"])
             for (offset, id) in ids.enumerated() {
