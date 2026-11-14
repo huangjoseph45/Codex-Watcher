@@ -4,6 +4,25 @@
 
 A native SwiftUI macOS menu bar app that lists active local Codex sessions. It refreshes every 15 seconds by default, including while the dropdown is closed. Click the lookout flag icon in the menu bar to view titles, working folders, sources, and IDs. Requires macOS 14 or newer and Xcode 16 or newer (Swift 6).
 
+## Quick start
+
+1. Use a Mac running **macOS 14+**, with **Xcode 16+** installed and its command-line tools selected in **Xcode → Settings → Locations**. Open Xcode once to finish its first-launch setup. Have Codex installed and a local session open; older versions without writer locks are unsupported.
+2. Clone the repository, then build and launch:
+
+   ```sh
+   git clone https://github.com/huangjoseph45/Codex-Watcher.git
+   cd Codex-Watcher
+   bash scripts/run-app.sh
+   ```
+
+   If you already cloned it, run the last command from the repository folder. No extra package installation is needed.
+3. Look for the **lookout flag in the macOS menu bar**. There is no Dock icon or main window. Click it to see active sessions; allow up to 15 seconds for the next refresh, or click Refresh. If the icon is hidden, check whether other menu items or the display notch are crowding it out.
+4. The default Codex folder is `~/.codex`. For a custom location, use the **Folder** button to select your Codex home folder. Use **Settings** to change the refresh interval, toggle each sound, or adjust sound volume. No macOS notification permission is required for the permission bubbles.
+
+For later launches, open **`dist/Session Scout.app`** in Finder; you can also copy it to Applications. After changing the source, rerun `bash scripts/run-app.sh` to rebuild and replace the running copy. To quit, use the power button in the dropdown. Clicking a session opens its project in **VS Code**, which must be installed for that feature.
+
+## Using the app
+
 The app runs without a Dock icon or main window. The dropdown includes Refresh, Folder, Settings, and a power icon to Quit; right-click a session to copy its ID. The footer hides during permission requests. Hover over truncated text to read it in full. The menu bar icon stays compact by default; hover over it for the session count, or enable `showMenuBarSessionCount` to display the count alongside it (or `!` on scan errors).
 
 Use **Settings → Refresh interval** to choose 1, 2, 5, 15, 30, or 60 seconds. The selection takes effect immediately and persists across launches. **Use config default** clears the saved choice. The dropdown omits the refresh-frequency and last-update status strip.
@@ -12,17 +31,11 @@ Each session shows its live status: **Working**, **Idle**, **Needs input**, **Ap
 
 When a session needs input or approval, an anchored bubble appears without activating the app. It shows the session and folder, the pending command or question, and the supported response controls. Command approvals offer **Allow once**, **Decline**, and **Cancel run**. Questions offer the original choices or a text field, with no choice selected automatically. Secret text answers use a secure field. **Open session** switches to its VS Code project window for context. File approvals require reviewing the changes in the session before allowing them; the bubble can still decline or stop them. Other request types provide Open session.
 
-Automatic alerts use a compact 300 × 132 point preview with only the session, folder, **Review**, and **Open session**. The preview hides after six seconds; hovering pauses dismissal. Review opens a 340-point-wide response form that grows to fit its content without a scrolling section. Requests that exceed the available screen height offer Open session instead of cutting off controls. Dismissing a preview never answers the request; the menu icon remains amber while input is outstanding.
+Automatic alerts use a compact 300 × 132 point preview with only the session, folder, **Review**, and **Open session**. The preview hides after six seconds; hovering pauses dismissal. Review opens a 340-point-wide response form that grows to fit its content without a scrolling section. Requests that exceed the available screen height offer Open session instead of cutting off controls. Dismissing a preview never answers the request; the session continues to show its waiting status in the dropdown.
 
 **Later** dismisses the bubble without answering. Alerts are deduplicated per pending request, and multiple sessions queue separately. To revisit a dismissed request, click **Review requests** in the dropdown or right-click the session and choose **Review Request**. Responding in the original client also clears the bubble on the next scan. Responses are sent only after an explicit click, only after replaying and verifying the same pending request, and never retried automatically if confirmation is lost.
 
 Click a session to open its working folder in VS Code using its [project URL handler](https://code.visualstudio.com/docs/configure/command-line#_opening-vs-code-with-urls). VS Code brings forward the window for that project (or opens the folder if it is no longer open). The dropdown closes after the link is accepted. This targets the project window, not an individual terminal tab; sessions in the same folder share a destination. Only sessions recorded with source `vscode` are supported for switching; other sources show a message rather than opening an unrelated app or resuming a second copy of a session.
-
-Build a launchable app:
-
-```sh
-bash scripts/run-app.sh
-```
 
 For development, open `Package.swift` in Xcode and run the `SessionScout` executable scheme, or use `swift run SessionScout`. The built app is `dist/Session Scout.app`.
 
