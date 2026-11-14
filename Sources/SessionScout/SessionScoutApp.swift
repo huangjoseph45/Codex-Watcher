@@ -555,7 +555,7 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Switch to \(session.title)")
                         .padding(.vertical, 8)
-                        .buttonHoverFeedback()
+                        .buttonHoverFeedback(highlightPadding: 3)
                         .contextMenu {
                             if session.activity.needsAttention {
                                 Button("Review Request") { onReviewSession(session) }
