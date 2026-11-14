@@ -139,7 +139,7 @@ private struct PromptForm: View {
             HStack(spacing: 8) {
                 Button("Later", action: onDismiss).keyboardShortcut(.cancelAction)
                 if prompt.kind == .commandApproval || prompt.kind == .fileApproval {
-                    Button("Stop turn") { submit(.approval(.cancel)) }
+                    Button("Cancel run") { submit(.approval(.cancel)) }
                         .help("Deny this action and interrupt the turn.")
                         .disabled(disabled)
                 }
