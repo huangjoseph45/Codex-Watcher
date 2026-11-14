@@ -25,7 +25,8 @@ struct SettingsMenu: View {
             SoundSettingsMenu(store: store)
         } label: {
             Image(systemName: "gearshape")
-                .font(.system(size: store.configuration.textSize + 2))
+                .resizable()
+                .scaledToFit()
                 .frame(width: store.configuration.textSize + 4, height: store.configuration.textSize + 4)
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).controlSize(.regular).fixedSize()
