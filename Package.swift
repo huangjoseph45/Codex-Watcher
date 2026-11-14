@@ -10,7 +10,8 @@ let package = Package(
         .target(name: "SessionMonitor", dependencies: ["CSQLite"], resources: [.copy("Resources/config.json")]),
         .executableTarget(name: "SessionScout", dependencies: ["SessionMonitor"],
                           resources: [.copy("Resources/quit.svg"), .copy("Resources/scout.svg"),
-                                      .copy("Resources/action-required.wav"), .copy("Resources/turn-finished.wav")]),
+                                      .copy("Resources/settings.svg"), .copy("Resources/action-required.wav"),
+                                      .copy("Resources/turn-finished.wav")]),
         .testTarget(name: "SessionMonitorTests", dependencies: ["SessionMonitor", "CSQLite"])
     ]
 )

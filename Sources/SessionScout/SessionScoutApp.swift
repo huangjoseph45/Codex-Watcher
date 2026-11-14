@@ -513,6 +513,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain).foregroundStyle(.orange).padding(12).background(.orange.opacity(0.08))
+                .buttonHoverFeedback()
             }
 
             if let warning = store.configurationWarning {
@@ -554,6 +555,7 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Switch to \(session.title)")
                         .padding(.vertical, 8)
+                        .buttonHoverFeedback()
                         .contextMenu {
                             if session.activity.needsAttention {
                                 Button("Review Request") { onReviewSession(session) }
@@ -582,11 +584,13 @@ struct ContentView: View {
                         store.chooseHome()
                     } label: { Label("Folder", systemImage: "folder") }
                         .help("Choose Codex Home: \(store.home.path)")
+                        .buttonHoverFeedback()
                         .disabled(store.refreshing)
                     Button {
                         Task { await store.refresh() }
                     } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                         .keyboardShortcut("r")
+                        .buttonHoverFeedback()
                         .disabled(store.refreshing)
                     Spacer()
                     SettingsMenu(store: store)
@@ -594,6 +598,7 @@ struct ContentView: View {
                         .keyboardShortcut("q")
                         .help("Quit Session Scout (⌘Q)")
                         .accessibilityLabel("Quit Session Scout")
+                        .buttonHoverFeedback()
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.orange)

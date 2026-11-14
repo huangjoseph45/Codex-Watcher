@@ -186,5 +186,6 @@ struct PromptActionButtonStyle: ButtonStyle {
                     .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
             }
             .opacity(isEnabled ? 1 : 0.5)
+            .buttonHoverFeedback()
     }
 }
