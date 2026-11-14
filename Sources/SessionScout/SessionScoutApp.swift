@@ -77,7 +77,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         item.isVisible = true
         statusItem = item
         if let button = item.button {
-            button.image = ScoutIcon.image
+            button.image = ScoutIcon.menuBarImage
                 ?? NSImage(systemSymbolName: "binoculars", accessibilityDescription: "Session Scout")
             button.image?.isTemplate = true
             button.imagePosition = .imageLeading
@@ -108,7 +108,8 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             ? (store.error == nil ? "\(store.sessions.count)" : "!") : ""
         statusItem?.button?.toolTip = "Session Scout — \(store.sessions.count) active sessions"
         let waiting = store.sessions.filter { $0.activity.needsAttention }.count
-        statusItem?.button?.contentTintColor = waiting > 0 ? .systemOrange : nil
+        // Let AppKit supply the template color, including while a popup is open.
+        statusItem?.button?.contentTintColor = nil
         if waiting > 0 { statusItem?.button?.toolTip = "Session Scout — \(waiting) session(s) need input" }
     }
 
