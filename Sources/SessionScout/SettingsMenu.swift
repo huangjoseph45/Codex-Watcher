@@ -110,13 +110,27 @@ final class SettingsButton: NSButton {
     }
     override func updateTrackingAreas() {
         if let hoverArea { removeTrackingArea(hoverArea) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        let area = NSTrackingArea(rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect],
+            owner: self)
         addTrackingArea(area)
         hoverArea = area
         super.updateTrackingAreas()
     }
     override func mouseEntered(with event: NSEvent) {
-        if isEnabled { layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.09).cgColor }
+        if isEnabled {
+            NSCursor.pointingHand.set()
+            layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.09).cgColor
+        }
     }
-    override func mouseExited(with event: NSEvent) { layer?.backgroundColor = nil }
+    override func mouseMoved(with event: NSEvent) {
+        if isEnabled { NSCursor.pointingHand.set() }
+    }
+    override func cursorUpdate(with event: NSEvent) {
+        (isEnabled ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = nil
+        NSCursor.arrow.set()
+    }
 }
