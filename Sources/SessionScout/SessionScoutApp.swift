@@ -584,13 +584,13 @@ struct ContentView: View {
                         store.chooseHome()
                     } label: { Label("Folder", systemImage: "folder") }
                         .help("Choose Codex Home: \(store.home.path)")
-                        .buttonHoverFeedback()
+                        .buttonHoverFeedback(highlightPadding: 3)
                         .disabled(store.refreshing)
                     Button {
                         Task { await store.refresh() }
                     } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                         .keyboardShortcut("r")
-                        .buttonHoverFeedback()
+                        .buttonHoverFeedback(highlightPadding: 3)
                         .disabled(store.refreshing)
                     Spacer()
                     SettingsMenu(store: store)
@@ -598,7 +598,7 @@ struct ContentView: View {
                         .keyboardShortcut("q")
                         .help("Quit Session Scout (⌘Q)")
                         .accessibilityLabel("Quit Session Scout")
-                        .buttonHoverFeedback()
+                        .buttonHoverFeedback(highlightPadding: 3)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.orange)

@@ -34,7 +34,7 @@ struct SettingsMenu: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SettingsButton, context: Context) -> CGSize? {
-        let size = store.configuration.textSize + 8
+        let size = store.configuration.textSize + 12
         return CGSize(width: size, height: size)
     }
 

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 private struct ButtonHoverFeedback: ViewModifier {
+    let highlightPadding: CGFloat
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
@@ -12,6 +13,7 @@ private struct ButtonHoverFeedback: ViewModifier {
             .overlay {
                 RoundedRectangle(cornerRadius: 5)
                     .fill(.orange.opacity(hovering && isEnabled ? 0.09 : 0))
+                    .padding(-highlightPadding)
                     .allowsHitTesting(false)
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering && isEnabled)
@@ -38,5 +40,7 @@ private struct ButtonHoverFeedback: ViewModifier {
 }
 
 extension View {
-    func buttonHoverFeedback() -> some View { modifier(ButtonHoverFeedback()) }
+    func buttonHoverFeedback(highlightPadding: CGFloat = 0) -> some View {
+        modifier(ButtonHoverFeedback(highlightPadding: highlightPadding))
+    }
 }
