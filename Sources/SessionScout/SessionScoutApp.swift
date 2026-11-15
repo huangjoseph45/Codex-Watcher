@@ -107,7 +107,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         statusItem?.button?.title = store.configuration.menuBarShowsCount
             ? (store.error == nil ? "\(store.sessions.count)" : "!") : ""
         statusItem?.button?.toolTip = "Session Scout — \(store.sessions.count) active sessions"
-        let waiting = store.sessions.filter { $0.activity.needsAttention }.count
+        let waiting = store.sessions.filter { $0.needsAttention }.count
         // Let AppKit supply the template color, including while a popup is open.
         statusItem?.button?.contentTintColor = nil
         if waiting > 0 { statusItem?.button?.toolTip = "Session Scout — \(waiting) session(s) need input" }
@@ -132,7 +132,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
 
     private func processAttention() {
         guard let store, store.configuration.attentionSettings.enabled else { return }
-        let waiting = Set(store.sessions.filter { $0.activity.needsAttention || $0.activity == .unknown }.map(\.id))
+        let waiting = Set(store.sessions.filter { $0.needsAttention || $0.activity == .unknown }.map(\.id))
         attentionQueue.removeAll { !waiting.contains($0) }
         if let current = attentionSessionID, !waiting.contains(current) {
             attentionDismissTask?.cancel()
@@ -142,7 +142,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         let incoming = attentionTracker.update(store.sessions)
         if let id = attentionSessionID, !attentionIsCompact, attentionPopover.isShown,
            let session = store.sessions.first(where: { $0.id == id }),
-           session.activity.needsAttention, session.pendingPrompt?.id != displayedPromptIdentity {
+           session.needsAttention, session.attentionIdentity != displayedPromptIdentity {
             showAttention(for: id)
         }
         for id in incoming where id != attentionSessionID && !attentionQueue.contains(id) { attentionQueue.append(id) }
@@ -155,7 +155,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private func showNextAttention() {
         guard !popover.isShown, !attentionPopover.isShown, statusItem?.isVisible == true else { return }
         for (index, id) in attentionQueue.enumerated() {
-            guard store?.sessions.contains(where: { $0.id == id && $0.activity.needsAttention }) == true else { continue }
+            guard store?.sessions.contains(where: { $0.id == id && $0.needsAttention }) == true else { continue }
             attentionQueue.remove(at: index)
             showAttention(for: id, compact: true)
             return
@@ -193,14 +193,14 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
 
     private func showAttention(for sessionID: String, compact: Bool = false) {
         guard let store, let button = statusItem?.button,
-              store.sessions.contains(where: { $0.id == sessionID && $0.activity.needsAttention }) else { return }
+              store.sessions.contains(where: { $0.id == sessionID && $0.needsAttention }) else { return }
         popover.performClose(nil)
         attentionDismissTask?.cancel()
         attentionPopover.performClose(nil)
         attentionQueue.removeAll { $0 == sessionID }
         attentionSessionID = sessionID
         attentionIsCompact = compact
-        displayedPromptIdentity = store.sessions.first(where: { $0.id == sessionID })?.pendingPrompt?.id
+        displayedPromptIdentity = store.sessions.first(where: { $0.id == sessionID })?.attentionIdentity
         store.promptError = nil
         store.promptFeedback = nil
         store.navigationError = nil
@@ -275,6 +275,10 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private func focusSession(_ session: CodexSession) {
         guard let store else { return }
         store.navigationError = nil
+        if session.source?.lowercased() != "vscode" {
+            showSessionAppChooser(for: session)
+            return
+        }
         do {
             let url = try SessionNavigation.projectURL(for: session)
             guard NSWorkspace.shared.urlForApplication(toOpen: url) != nil,
@@ -287,6 +291,55 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         } catch {
             store.navigationError = error.localizedDescription
         }
+    }
+
+    private func showSessionAppChooser(for session: CodexSession) {
+        guard let button = statusItem?.button else { return }
+        // Codex's writer process is often a daemon and does not identify the
+        // client tab. Let the user choose an existing host instead of guessing.
+        let hostIDs: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty",
+            "dev.warp.Warp-Stable", "org.alacritty", "net.kovidgoyal.kitty", "com.github.wez.wezterm",
+            "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.openai.codex"]
+        let apps = NSWorkspace.shared.runningApplications.filter {
+            $0.bundleIdentifier.map(hostIDs.contains) == true && $0.activationPolicy == .regular
+        }.sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
+        let menu = NSMenu(title: "Open session")
+        menu.autoenablesItems = false
+        let heading = NSMenuItem(title: "Choose the app running this session", action: nil, keyEquivalent: "")
+        heading.isEnabled = false
+        menu.addItem(heading)
+        for app in apps {
+            let item = NSMenuItem(title: "Switch to \(app.localizedName ?? "terminal")",
+                                  action: #selector(activateSessionApp(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = app
+            menu.addItem(item)
+        }
+        let hint = NSMenuItem(title: apps.isEmpty ? "No supported session app is running" : "Then select the session’s tab or window", action: nil, keyEquivalent: "")
+        hint.isEnabled = false
+        menu.addItem(hint)
+        menu.addItem(.separator())
+        let copy = NSMenuItem(title: "Copy Session ID", action: #selector(copySessionReference(_:)), keyEquivalent: "")
+        copy.target = self
+        copy.representedObject = session.id
+        menu.addItem(copy)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+    }
+
+    @objc private func activateSessionApp(_ item: NSMenuItem) {
+        guard let app = item.representedObject as? NSRunningApplication else { return }
+        if app.activate(options: []) {
+            popover.performClose(nil)
+            dismissAttention()
+        } else {
+            store?.navigationError = "Couldn’t activate that app. Open the session’s terminal manually."
+        }
+    }
+
+    @objc private func copySessionReference(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(id, forType: .string)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -391,6 +444,9 @@ final class SessionStore {
             sessions = snapshot.sessions.map { scanned in
                 var session = scanned
                 if session.activity == .unknown { session.pendingPrompt = previous[session.id]?.pendingPrompt }
+                if configuration.attentionSettings.enabled, !session.reviewQuestionChecked, !session.activity.needsAttention {
+                    session.reviewQuestion = previous[session.id]?.reviewQuestion
+                }
                 return session
             }
             notice = snapshot.notice
@@ -506,11 +562,11 @@ struct ContentView: View {
             .background(.orange.opacity(0.05))
             Divider()
 
-            if let waiting = store.sessions.first(where: { $0.activity.needsAttention }) {
+            if let waiting = store.sessions.first(where: { $0.needsAttention }) {
                 Button {
                     onReviewSession(waiting)
                 } label: {
-                    Label("Review requests (\(store.sessions.filter { $0.activity.needsAttention }.count))", systemImage: "exclamationmark.bubble")
+                    Label("Review requests (\(store.sessions.filter { $0.needsAttention }.count))", systemImage: "exclamationmark.bubble")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain).foregroundStyle(.orange).padding(12).background(.orange.opacity(0.08))
@@ -558,7 +614,7 @@ struct ContentView: View {
                         .padding(.vertical, 8)
                         .buttonHoverFeedback(highlightPadding: 3)
                         .contextMenu {
-                            if session.activity.needsAttention {
+                            if session.needsAttention {
                                 Button("Review Request") { onReviewSession(session) }
                             }
                             Button("Copy Session ID") {
@@ -627,7 +683,7 @@ private struct SessionRow: View {
     let fontSize: Double
 
     private var statusColor: Color {
-        if stale { return .orange }
+        if stale || session.reviewQuestion != nil { return .orange }
         switch session.activity {
         case .working: return .green
         case .waitingForInput, .waitingForApproval: return .orange
@@ -665,11 +721,11 @@ private struct SessionRow: View {
             Spacer(minLength: 8)
             HStack(spacing: 5) {
                 Circle().fill(statusColor).frame(width: 6, height: 6)
-                Text(stale ? "Stale" : session.activity.label).foregroundStyle(.secondary)
+                Text(stale ? "Stale" : (session.reviewQuestion != nil ? "Question" : session.activity.label)).foregroundStyle(.secondary)
             }
                 .font(.system(size: fontSize - 2))
                 .fixedSize()
-                .help(stale ? "Session data may be out of date." : session.activity.explanation)
+                .help(stale ? "Session data may be out of date." : (session.reviewQuestion != nil ? "Codex has a clarification question. Open the session to respond." : session.activity.explanation))
         }
         .padding(.vertical, 2)
     }

@@ -30,9 +30,12 @@ struct AttentionBubbleView: View {
                             PromptForm(store: store, prompt: prompt, onDismiss: onDismiss,
                                        onOpenSession: { onOpenSession(session) }).id(prompt.id)
                         } else {
-                            Text(showDetails ? (session.promptNotice ?? "Open this session to review and respond to its request.")
+                            Text(showDetails ? (session.reviewQuestion?.text ?? session.promptNotice ?? "Open this session to review and respond to its request.")
                                  : "This request is too large to fit on screen. Open the session to review it in full.")
                                 .foregroundStyle(.secondary)
+                            if session.reviewQuestion != nil {
+                                Text("Review the options and answer in the session.").foregroundStyle(.secondary)
+                            }
                             HStack {
                                 Button("Later", action: onDismiss).keyboardShortcut(.cancelAction)
                                 Spacer()

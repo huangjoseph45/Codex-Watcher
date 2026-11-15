@@ -61,6 +61,32 @@ final class PendingPromptTests: XCTestCase {
         XCTAssertNoThrow(try file.response(for: .approval(.decline)))
     }
 
+    func testUnsupportedOrMalformedQuestionsRemainReviewOnly() throws {
+        let variants: [Any] = [[], [["id": "missing-text"]],
+            [["id": "choice", "question": "Which?", "options": [["label": "A"], ["futureLabel": "B"]]]],
+            [["id": "choice", "question": "Which?", "options": "future-format"]],
+            [["id": "choice", "question": "Which?", "options": [["label": "A"], ["label": "A"]]]]]
+        for questions in variants {
+            var message = question()
+            var params = message["params"] as! [String: Any]
+            params["questions"] = questions
+            message["params"] = params
+            let prompt = try XCTUnwrap(PendingPrompt.parse(message, threadID: thread))
+            XCTAssertEqual(prompt.kind, .unsupported)
+            XCTAssertFalse(prompt.accepts(["choice": "A"]))
+            XCTAssertThrowsError(try prompt.response(for: .answers(["choice": "A"])))
+        }
+        let elicitation: [String: Any] = ["id": "design", "method": "mcpServer/elicitation/request",
+            "params": ["threadId": thread, "mode": "openaiForm", "message": "Approve this design?", "requestedSchema": [:]]]
+        let prompt = try XCTUnwrap(PendingPrompt.parse(elicitation, threadID: thread))
+        XCTAssertEqual(prompt.kind, .unsupported)
+        var session = CodexSession(id: thread, title: "Design", activity: .waitingForInput)
+        session.pendingPrompt = prompt
+        var tracker = AttentionTracker()
+        XCTAssertEqual(tracker.update([session]), [thread])
+        XCTAssertThrowsError(try prompt.response(for: .approval(.accept)))
+    }
+
     func testResolutionReplaysAndConfirmsExactRequestIncludingIDCollision() throws {
         let message = approval(id: 3) // Server and client RPC IDs can overlap.
         let expected = try XCTUnwrap(PendingPrompt.parse(message, threadID: thread))

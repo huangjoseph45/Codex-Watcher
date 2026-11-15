@@ -91,6 +91,8 @@ final class SessionScannerTests: XCTestCase {
         for session in snapshot.sessions { print("Session \(session.id): \(session.activity.label)") }
         XCTAssertNil(snapshot.notice)
         XCTAssertTrue(snapshot.sessions.allSatisfy { $0.activity != .unknown })
+        let questionCandidates = snapshot.sessions.filter { $0.activity == .working || $0.activity == .idle }
+        XCTAssertTrue(questionCandidates.allSatisfy(\.reviewQuestionChecked), "Latest-turn question reads must work against the local server.")
     }
 
     func testLocalScannerPerformanceWhenRequested() throws {

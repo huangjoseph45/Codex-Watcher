@@ -11,6 +11,11 @@ public struct CodexSession: Identifiable, Sendable, Equatable {
     public var activity: SessionActivity = .unknown
     public var pendingPrompt: PendingPrompt?
     public var promptNotice: String?
+    public var reviewQuestion: ReviewQuestion?
+    public var reviewQuestionChecked = false
+
+    public var needsAttention: Bool { activity.needsAttention || reviewQuestion != nil }
+    public var attentionIdentity: String? { pendingPrompt?.id ?? reviewQuestion?.id }
 }
 
 public struct SessionSnapshot: Sendable {
@@ -70,6 +75,14 @@ public struct SessionScanner: Sendable {
                 } catch {
                     sessions[index].promptNotice = "Couldn’t retrieve this prompt. Open the session to review it."
                 }
+            }
+        }
+        if configuration.attentionSettings.enabled {
+            let candidates = sessions.filter { $0.activity == .working || $0.activity == .idle }.map(\.id)
+            let questions = ReviewQuestionReader(home: home, timeoutMilliseconds: configuration.statusTimeout).read(ids: candidates)
+            for index in sessions.indices {
+                sessions[index].reviewQuestion = questions.questions[sessions[index].id]
+                sessions[index].reviewQuestionChecked = questions.checkedIDs.contains(sessions[index].id)
             }
         }
         if let statusNotice = live.notice {

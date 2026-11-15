@@ -66,7 +66,16 @@ public struct PendingPrompt: Sendable, Equatable, Identifiable {
                             isSecret: question["isSecret"] as? Bool ?? false)
         }
         // Malformed question sets must never allow a partial answer.
-        let validQuestions = questions.count == rawQuestions.count && Set(questions.map(\.id)).count == questions.count
+        let validQuestions = !questions.isEmpty && questions.count == rawQuestions.count
+            && Set(questions.map(\.id)).count == questions.count
+            && questions.allSatisfy { !$0.id.isEmpty && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            && zip(rawQuestions, questions).allSatisfy { raw, question in
+                guard let options = raw["options"], !(options is NSNull) else { return true }
+                guard let options = options as? [[String: Any]] else { return false }
+                let labels = question.options.map(\.label)
+                return labels.count == options.count && Set(labels).count == labels.count
+                    && labels.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            }
         return Self(id: SHA256.hash(data: canonical).map { String(format: "%02x", $0) }.joined(),
                     requestID: requestID, threadID: threadID,
                     kind: kind == .userInput && !validQuestions ? .unsupported : kind,

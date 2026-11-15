@@ -10,12 +10,12 @@ public struct AttentionTracker {
         announced = announced.filter { activeIDs.contains($0.key) }
         var newIDs: [String] = []
         for session in sessions {
-            guard session.activity.needsAttention else {
+            guard session.needsAttention else {
                 if session.activity != .unknown { announced.removeValue(forKey: session.id) }
                 continue
             }
-            if session.pendingPrompt == nil, let previous = announced[session.id], !previous.hasPrefix("status:") { continue }
-            let identity = session.pendingPrompt?.id ?? "status:\(session.activity.rawValue)"
+            if session.attentionIdentity == nil, let previous = announced[session.id], !previous.hasPrefix("status:") { continue }
+            let identity = session.attentionIdentity ?? "status:\(session.activity.rawValue)"
             if announced[session.id] != identity {
                 announced[session.id] = identity
                 newIDs.append(session.id)
