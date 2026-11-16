@@ -1,0 +1,44 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:Codex-Watcher}",
+      "name": "Debug SessionScout",
+      "target": "SessionScout",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug SessionScout"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:Codex-Watcher}",
+      "name": "Release SessionScout",
+      "target": "SessionScout",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release SessionScout"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:Codex-Watcher}",
+      "name": "Debug SessionScout",
+      "target": "SessionScout",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug SessionScout"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:Codex-Watcher}",
+      "name": "Release SessionScout",
+      "target": "SessionScout",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release SessionScout"
+    }
+  ]
+}
