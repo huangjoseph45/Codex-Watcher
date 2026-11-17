@@ -23,6 +23,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private var attentionSessionID: String?
     private var attentionDismissTask: Task<Void, Never>?
     private var attentionIsCompact = false
+    private var attentionIsAutomatic = false
     private var displayedPromptIdentity: String?
     private var attentionQueue: [String] = []
     private var attentionTracker = AttentionTracker()
@@ -98,7 +99,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             // menu bars. Let the system move it; do not reorder it from those frames.
             self.statusItem?.isVisible = true
             self.updateStatusItem()
-            if self.store?.configuration.attentionSettings.autoShowBubble == true { self.showNextAttention() }
+            if self.store?.popupsEnabled == true { self.showNextAttention() }
         }
     }
 
@@ -116,6 +117,10 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private func observeStatus() {
         guard let store else { return }
         withObservationTracking {
+            _ = store.popupsEnabled
+            _ = store.approvalPopupsEnabled
+            _ = store.questionPopupsEnabled
+            _ = store.backgroundQuestionPopupsEnabled
             _ = store.sessions
             _ = store.error
             _ = store.completionSoundEnabled
@@ -139,25 +144,32 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             attentionPopover.performClose(nil)
             attentionSessionID = nil
         }
+        if attentionIsAutomatic, let id = attentionSessionID,
+           let session = store.sessions.first(where: { $0.id == id }), !store.shouldShowPopup(for: session) {
+            dismissAttention()
+        }
         let incoming = attentionTracker.update(store.sessions)
         if let id = attentionSessionID, !attentionIsCompact, attentionPopover.isShown,
            let session = store.sessions.first(where: { $0.id == id }),
            session.needsAttention, session.attentionIdentity != displayedPromptIdentity {
-            showAttention(for: id)
+            showAttention(for: id, automatic: attentionIsAutomatic)
         }
         for id in incoming where id != attentionSessionID && !attentionQueue.contains(id) { attentionQueue.append(id) }
         if !incoming.isEmpty, store.actionSoundEnabled {
             store.notificationSounds.play(.actionRequired, volume: store.soundVolume)
         }
-        if store.configuration.attentionSettings.autoShowBubble { showNextAttention() }
+        if store.popupsEnabled { showNextAttention() }
     }
 
     private func showNextAttention() {
-        guard !popover.isShown, !attentionPopover.isShown, statusItem?.isVisible == true else { return }
+        guard store?.popupsEnabled == true, !popover.isShown, !attentionPopover.isShown,
+              statusItem?.isVisible == true else { return }
         for (index, id) in attentionQueue.enumerated() {
-            guard store?.sessions.contains(where: { $0.id == id && $0.needsAttention }) == true else { continue }
+            guard let session = store?.sessions.first(where: { $0.id == id && $0.needsAttention }),
+                  store?.shouldShowPopup(for: session) == true else { continue }
             attentionQueue.remove(at: index)
-            showAttention(for: id, compact: true)
+            let permission = store?.sessions.first(where: { $0.id == id })?.activity == .waitingForApproval
+            showAttention(for: id, compact: !permission, automatic: true)
             return
         }
     }
@@ -191,7 +203,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func showAttention(for sessionID: String, compact: Bool = false) {
+    private func showAttention(for sessionID: String, compact: Bool = false, automatic: Bool = false) {
         guard let store, let button = statusItem?.button,
               store.sessions.contains(where: { $0.id == sessionID && $0.needsAttention }) else { return }
         popover.performClose(nil)
@@ -200,6 +212,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         attentionQueue.removeAll { $0 == sessionID }
         attentionSessionID = sessionID
         attentionIsCompact = compact
+        attentionIsAutomatic = automatic
         displayedPromptIdentity = store.sessions.first(where: { $0.id == sessionID })?.attentionIdentity
         store.promptError = nil
         store.promptFeedback = nil
@@ -221,20 +234,18 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             scheduleAttentionDismissal(sessionID: sessionID)
             return
         }
-        func content(showDetails: Bool) -> AnyView {
-            AnyView(AttentionBubbleView(store: store, sessionID: sessionID,
-                onOpenSession: { [weak self] session in self?.focusSession(session) },
-                onDismiss: { [weak self] in self?.dismissAttention() }, showDetails: showDetails)
-                .frame(width: settings.bubbleWidth).fixedSize(horizontal: false, vertical: true))
-        }
-        let host = NSHostingController(rootView: content(showDetails: true))
+        let maximumHeight = ((button.window?.screen ?? NSScreen.main)?.visibleFrame.height ?? 700) - 60
+        let content = AttentionBubbleView(store: store, sessionID: sessionID,
+            onOpenSession: { [weak self] session in self?.focusSession(session) },
+            onDismiss: { [weak self] in self?.dismissAttention() })
+            .frame(width: settings.bubbleWidth)
+        let measure = NSHostingController(rootView: content)
+        measure.view.layoutSubtreeIfNeeded()
+        let height = min(measure.view.fittingSize.height, maximumHeight)
+        let host = NSHostingController(rootView:
+            ScrollView { content }.frame(width: settings.bubbleWidth, height: height))
         host.sizingOptions = [.preferredContentSize]
         host.view.layoutSubtreeIfNeeded()
-        let maximumHeight = (button.window?.screen ?? NSScreen.main)?.visibleFrame.height ?? 700
-        if host.view.fittingSize.height > maximumHeight - 60 {
-            host.rootView = content(showDetails: false)
-            host.view.layoutSubtreeIfNeeded()
-        }
         attentionPopover.contentViewController = host
         attentionPopover.contentSize = host.view.fittingSize
         NSLog("Session Scout request popup size=%@", NSStringFromSize(attentionPopover.contentSize))
@@ -258,6 +269,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         attentionPopover.performClose(nil)
         attentionSessionID = nil
         attentionIsCompact = false
+        attentionIsAutomatic = false
     }
 
     @objc private func togglePopover() {
@@ -387,6 +399,10 @@ final class SessionStore {
     var refreshing = false
     var home: URL
     private(set) var refreshIntervalSeconds: Double
+    private(set) var popupsEnabled: Bool
+    private(set) var approvalPopupsEnabled: Bool
+    private(set) var questionPopupsEnabled: Bool
+    private(set) var backgroundQuestionPopupsEnabled: Bool
     private(set) var actionSoundEnabled: Bool
     private(set) var completionSoundEnabled: Bool
     private(set) var soundVolume: Double
@@ -411,6 +427,11 @@ final class SessionStore {
     fileprivate init(settings: StartupSettings) {
         configuration = settings.configuration
         configurationWarning = settings.warning
+        approvalPopupsEnabled = UserDefaults.standard.object(forKey: "approvalPopupsEnabled") as? Bool ?? true
+        questionPopupsEnabled = UserDefaults.standard.object(forKey: "questionPopupsEnabled") as? Bool ?? true
+        backgroundQuestionPopupsEnabled = UserDefaults.standard.object(forKey: "backgroundQuestionPopupsEnabled") as? Bool ?? true
+        popupsEnabled = UserDefaults.standard.object(forKey: "popupsEnabled") as? Bool
+            ?? configuration.attentionSettings.autoShowBubble
         actionSoundEnabled = UserDefaults.standard.object(forKey: "actionSoundEnabled") as? Bool
             ?? configuration.soundSettings.actionRequiredEnabled
         completionSoundEnabled = UserDefaults.standard.object(forKey: "completionSoundEnabled") as? Bool
@@ -468,6 +489,37 @@ final class SessionStore {
         UserDefaults.standard.removeObject(forKey: "refreshIntervalSeconds")
         refreshIntervalSeconds = configuration.refreshIntervalSeconds
         restartMonitoring()
+    }
+
+    func shouldShowPopup(for session: CodexSession) -> Bool {
+        guard popupsEnabled else { return false }
+        if session.activity == .waitingForApproval {
+            return approvalPopupsEnabled
+        }
+        if session.reviewQuestion != nil {
+            return backgroundQuestionPopupsEnabled
+        }
+        return questionPopupsEnabled
+    }
+
+    func setApprovalPopupsEnabled(_ enabled: Bool) {
+        approvalPopupsEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "approvalPopupsEnabled")
+    }
+
+    func setQuestionPopupsEnabled(_ enabled: Bool) {
+        questionPopupsEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "questionPopupsEnabled")
+    }
+
+    func setBackgroundQuestionPopupsEnabled(_ enabled: Bool) {
+        backgroundQuestionPopupsEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "backgroundQuestionPopupsEnabled")
+    }
+
+    func setPopupsEnabled(_ enabled: Bool) {
+        popupsEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "popupsEnabled")
     }
 
     func setActionSoundEnabled(_ enabled: Bool) {
@@ -540,6 +592,8 @@ struct ContentView: View {
     let onFocusSession: (CodexSession) -> Void
     let onReviewSession: (CodexSession) -> Void
     private var fontSize: Double { store.configuration.textSize }
+    @State private var selectedTab = Tab.sessions
+    private enum Tab: String, CaseIterable { case sessions = "Sessions", settings = "Settings" }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -562,6 +616,44 @@ struct ContentView: View {
             .background(.orange.opacity(0.05))
             Divider()
 
+            Picker("Page", selection: $selectedTab) {
+                ForEach(Tab.allCases, id: \.self) { tab in Text(tab.rawValue).tag(tab) }
+            }
+            .pickerStyle(.segmented).labelsHidden().padding(12)
+
+            if selectedTab == .settings {
+                SettingsView(store: store)
+            } else {
+                sessionsContent
+            }
+
+            Divider()
+            HStack(spacing: 12) {
+                if selectedTab == .sessions {
+                    Button {
+                        Task { await store.refresh() }
+                    } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+                        .keyboardShortcut("r")
+                        .buttonHoverFeedback(highlightPadding: 3)
+                        .disabled(store.refreshing)
+                }
+                Spacer()
+                Button { NSApplication.shared.terminate(nil) } label: { QuitIcon(size: fontSize + 4) }
+                    .keyboardShortcut("q")
+                    .help("Quit Session Scout (⌘Q)")
+                    .accessibilityLabel("Quit Session Scout")
+                    .buttonHoverFeedback(highlightPadding: 3)
+            }
+            .buttonStyle(.borderless).foregroundStyle(.orange)
+            .font(.system(size: fontSize - 1)).padding(14)
+        }
+        .background(.background)
+        .font(.system(size: fontSize))
+        .tint(.orange)
+    }
+
+    private var sessionsContent: some View {
+        VStack(spacing: 0) {
             if let waiting = store.sessions.first(where: { $0.needsAttention }) {
                 Button {
                     onReviewSession(waiting)
@@ -634,38 +726,8 @@ struct ContentView: View {
                 .background(.orange.opacity(0.025))
             }
 
-            if !store.sessions.contains(where: { $0.activity == .waitingForApproval }) {
-                Divider()
-                HStack(spacing: 12) {
-                    Button {
-                        store.chooseHome()
-                    } label: { Label("Folder", systemImage: "folder") }
-                        .help("Choose Codex Home: \(store.home.path)")
-                        .buttonHoverFeedback(highlightPadding: 3)
-                        .disabled(store.refreshing)
-                    Button {
-                        Task { await store.refresh() }
-                    } label: { Label("Refresh", systemImage: "arrow.clockwise") }
-                        .keyboardShortcut("r")
-                        .buttonHoverFeedback(highlightPadding: 3)
-                        .disabled(store.refreshing)
-                    Spacer()
-                    SettingsMenu(store: store)
-                    Button { NSApplication.shared.terminate(nil) } label: { QuitIcon(size: fontSize + 4) }
-                        .keyboardShortcut("q")
-                        .help("Quit Session Scout (⌘Q)")
-                        .accessibilityLabel("Quit Session Scout")
-                        .buttonHoverFeedback(highlightPadding: 3)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.orange)
-                .font(.system(size: fontSize - 1))
-                .padding(14)
-            }
         }
-        .background(.background)
-        .font(.system(size: fontSize))
-        .tint(.orange)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func banner(_ text: String, symbol: String, color: Color) -> some View {

@@ -133,6 +133,120 @@ final class PendingPromptTests: XCTestCase {
         XCTAssertNil(inbox.first)
     }
 
+    private func configuredApproval(_ extra: [String: Any]) -> [String: Any] {
+        var message = approval()
+        var params = message["params"] as! [String: Any]
+        params.merge(extra) { _, new in new }
+        message["params"] = params
+        return message
+    }
+
+    func testCommandRuleUsesExactProposedPrefixAndSessionScope() throws {
+        let prefix = ["git", "push", "origin", "feature with spaces"]
+        let prompt = try XCTUnwrap(PendingPrompt.parse(configuredApproval([
+            "proposedExecpolicyAmendment": prefix]), threadID: thread))
+        let rule = try XCTUnwrap(prompt.approvalChoices.first { $0.id.hasPrefix("exec:") })
+        XCTAssertTrue(rule.detail?.contains("feature with spaces") == true)
+        let response = try prompt.response(for: .approvalChoice(rule.id))
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        let decision = try XCTUnwrap(result["decision"] as? [String: [String: [String]]])
+        XCTAssertEqual(decision["acceptWithExecpolicyAmendment"]?["execpolicy_amendment"], prefix)
+        let session = try prompt.response(for: .approvalChoice("acceptForSession"))
+        XCTAssertEqual((session["result"] as? [String: String])?["decision"], "acceptForSession")
+        XCTAssertThrowsError(try prompt.response(for: .approvalChoice("exec:invented")))
+    }
+
+    func testAvailableDecisionsAreAuthoritativeAndPreserveOrder() throws {
+        let rule: [String: Any] = ["applyNetworkPolicyAmendment": ["network_policy_amendment": ["host": "example.com", "action": "deny"]]]
+        let prompt = try XCTUnwrap(PendingPrompt.parse(configuredApproval([
+            "availableDecisions": [rule, "decline", "futureDecision"],
+            "proposedExecpolicyAmendment": ["git"]]), threadID: thread))
+        XCTAssertEqual(prompt.approvalChoices.map(\.id), ["network:deny:example.com", "decline"])
+        XCTAssertThrowsError(try prompt.response(for: .approval(.accept)))
+        XCTAssertThrowsError(try prompt.response(for: .approval(.cancel)))
+        let result = try prompt.response(for: .approvalChoice("network:deny:example.com"))["result"] as! [String: Any]
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: result["decision"]!, options: [.sortedKeys]),
+                       try JSONSerialization.data(withJSONObject: rule, options: [.sortedKeys]))
+        for list: Any in [[], "invalid"] {
+            let empty = try XCTUnwrap(PendingPrompt.parse(configuredApproval(["availableDecisions": list]), threadID: thread))
+            XCTAssertTrue(empty.approvalChoices.isEmpty)
+        }
+    }
+
+    func testManagedNetworkRequestWithoutCommandCanBeAnswered() throws {
+        var message = configuredApproval(["networkApprovalContext": ["host": "example.com", "protocol": "https"]])
+        var params = message["params"] as! [String: Any]
+        params.removeValue(forKey: "command")
+        message["params"] = params
+        let prompt = try XCTUnwrap(PendingPrompt.parse(message, threadID: thread))
+        XCTAssertTrue(prompt.canApproveHere)
+        XCTAssertTrue(prompt.permissionDetails?.contains("example.com") == true)
+        XCTAssertNoThrow(try prompt.response(for: .approval(.accept)))
+    }
+
+    func testPermissionsRequestGrantsOnlyRequestedAccessOrNothing() throws {
+        var message = approval()
+        message["method"] = "item/permissions/requestApproval"
+        var params = message["params"] as! [String: Any]
+        params["permissions"] = ["network": ["enabled": true], "fileSystem": NSNull()]
+        message["params"] = params
+        let prompt = try XCTUnwrap(PendingPrompt.parse(message, threadID: thread))
+        XCTAssertEqual(prompt.kind, .permissionsApproval)
+        XCTAssertEqual(prompt.approvalChoices.map(\.id), ["turn", "session", "decline"])
+        let allowed = try prompt.response(for: .approvalChoice("session"))["result"] as! [String: Any]
+        XCTAssertEqual(allowed["scope"] as? String, "session")
+        let granted = allowed["permissions"] as! [String: Any]
+        XCTAssertNil(granted["fileSystem"])
+        XCTAssertEqual((granted["network"] as? [String: Bool])?["enabled"], true)
+        let denied = try prompt.response(for: .approvalChoice("decline"))["result"] as! [String: Any]
+        XCTAssertTrue((denied["permissions"] as! [String: Any]).isEmpty)
+        XCTAssertThrowsError(try prompt.response(for: .approval(.accept)))
+    }
+
+    private func fileApproval() -> [String: Any] {
+        var message = approval()
+        message["method"] = "item/fileChange/requestApproval"
+        return message
+    }
+
+    private func fileItem(diff: String = "+new line") -> [String: Any] {
+        ["type": "fileChange", "id": "item-1", "changes": [
+            ["path": "/tmp/project/file.txt", "kind": ["type": "update"], "diff": diff]]]
+    }
+
+    private func fileMetadata(diff: String = "+new line") -> [String: Any] {
+        ["id": 4, "result": ["thread": ["turns": [["id": "turn-1", "items": [fileItem(diff: diff)]]]]]]
+    }
+
+    func testFileApprovalsRequireExactReviewedDiffOnFreshConnection() throws {
+        let expected = try XCTUnwrap(PendingPrompt.parse(fileApproval(), threadID: thread, fileItem: fileItem()))
+        XCTAssertTrue(expected.canApproveHere)
+        XCTAssertTrue(expected.fileChanges?.contains("+new line") == true)
+        let client = PromptClient(home: URL(fileURLWithPath: "/unused"), timeoutMilliseconds: 100)
+        for changed in [false, true] {
+            let stream = PromptFixtureStream(messages: [metadata(waiting: true), fileApproval(),
+                ["id": 3, "result": [:]], fileMetadata(diff: changed ? "+different" : "+new line"),
+                ["method": "serverRequest/resolved", "params": ["threadId": thread, "requestId": 42]]])
+            if changed {
+                XCTAssertThrowsError(try client.resolve(expected, with: .approval(.accept), connection: LocalWebSocket(stream: stream)))
+                XCTAssertEqual(stream.writes.count, 3)
+            } else {
+                XCTAssertEqual(try client.resolve(expected, with: .approval(.accept), connection: LocalWebSocket(stream: stream)), .confirmed)
+                XCTAssertEqual(stream.writes.count, 4)
+            }
+        }
+    }
+
+    func testChangedRuleCannotBeApprovedFromStalePopup() throws {
+        let expected = try XCTUnwrap(PendingPrompt.parse(configuredApproval(["proposedExecpolicyAmendment": ["git", "status"]]), threadID: thread))
+        let rule = try XCTUnwrap(expected.approvalChoices.first { $0.id.hasPrefix("exec:") })
+        let stream = PromptFixtureStream(messages: [metadata(waiting: true),
+            configuredApproval(["proposedExecpolicyAmendment": ["git"]]), ["id": 3, "result": [:]]])
+        let client = PromptClient(home: URL(fileURLWithPath: "/unused"), timeoutMilliseconds: 100)
+        XCTAssertThrowsError(try client.resolve(expected, with: .approvalChoice(rule.id), connection: LocalWebSocket(stream: stream)))
+        XCTAssertEqual(stream.writes.count, 2)
+    }
+
     private func metadata(waiting: Bool) -> [String: Any] {
         ["id": 2, "result": ["thread": ["status": waiting
             ? ["type": "active", "activeFlags": ["waitingOnApproval"]] as [String: Any]

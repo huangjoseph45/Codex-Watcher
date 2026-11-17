@@ -89,18 +89,8 @@ private struct PromptForm: View {
                 Text(path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
             switch prompt.kind {
-            case .commandApproval, .fileApproval:
-                if prompt.kind == .fileApproval {
-                    Text("Review the file changes in the session before allowing them.").foregroundStyle(.secondary)
-                }
-                HStack(spacing: 8) {
-                    if prompt.canApproveHere {
-                        Button("Allow once") { submit(.approval(.accept)) }
-                    }
-                    Button("Decline") { submit(.approval(.decline)) }
-                        .help("Deny this action and let Codex continue.")
-                }
-                .disabled(disabled)
+            case .commandApproval, .fileApproval, .permissionsApproval:
+                PermissionApprovalForm(prompt: prompt, disabled: disabled, submit: submit)
             case .userInput:
                 ForEach(prompt.questions) { question in
                     VStack(alignment: .leading, spacing: 9) {
@@ -141,11 +131,6 @@ private struct PromptForm: View {
             }
             HStack(spacing: 8) {
                 Button("Later", action: onDismiss).keyboardShortcut(.cancelAction)
-                if prompt.kind == .commandApproval || prompt.kind == .fileApproval {
-                    Button("Cancel run") { submit(.approval(.cancel)) }
-                        .help("Deny this action and interrupt the turn.")
-                        .disabled(disabled)
-                }
                 Spacer(minLength: 0)
                 Button("Open session", action: onOpenSession)
             }
@@ -162,6 +147,38 @@ private struct PromptForm: View {
 
     private func submit(_ resolution: PromptResolution) {
         Task { await store.resolve(prompt, with: resolution) }
+    }
+}
+
+/// Show every available permission choice with its exact scope.
+private struct PermissionApprovalForm: View {
+    let prompt: PendingPrompt
+    let disabled: Bool
+    let submit: (PromptResolution) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let details = prompt.permissionDetails {
+                Text(details).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+            }
+            if let changes = prompt.fileChanges {
+                Text(changes).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+            } else if prompt.kind == .fileApproval {
+                Text("The file changes are unavailable. Open the session to review them before allowing.")
+                    .foregroundStyle(.secondary)
+            }
+            if prompt.approvalChoices.isEmpty {
+                Text("Open the session to review this permission request.").foregroundStyle(.secondary)
+            }
+            ForEach(prompt.approvalChoices) { choice in
+                VStack(alignment: .leading, spacing: 4) {
+                    Button(choice.label) { submit(.approvalChoice(choice.id)) }.disabled(disabled)
+                    if let detail = choice.detail {
+                        Text(detail).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                }
+            }
+        }
     }
 }
 

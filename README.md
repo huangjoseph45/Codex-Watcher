@@ -25,18 +25,18 @@ For later launches, open `dist/Session Scout.app` in Finder, or copy it to Appli
 - **Click the flag** to see active sessions, their folders, and live status.
 - **Click a session** to open its VS Code project. This targets the project window, not an exact terminal tab. Other sessions offer a chooser of running terminal/editor apps; choose the app, then select the session’s tab or window. You can also copy its session ID.
 - **Folder** selects a custom Codex home directory. The default is `~/.codex`; shell launches also honor `CODEX_HOME`.
-- **Refresh** scans immediately. **Settings** changes the refresh interval, toggles action/completion sounds independently, and adjusts volume.
+- **Refresh** scans immediately. The **Settings** tab contains popup preferences, sounds, volume, refresh interval, and the Codex home folder. Enable or disable permission popups, questions that pause Codex, and questions asked while Codex continues working independently. **Show automatic popups** turns them all off without changing those individual choices. **Sessions → Review requests** still opens pending prompts manually. Preferences are saved across relaunches.
 - **Power** quits the app. Right-click a session to copy its ID or folder path.
 
 ## Permissions and questions
 
-A small popup announces requests that need your attention. **Review** opens the details; **Open session** takes you back to the session’s app for context. Popups do not require macOS notification permission.
+Permission requests open a dedicated approval popup. A small popup announces other requests that need your attention. **Review** opens the details; **Open session** takes you back to the session’s app for context. Popups do not require macOS notification permission.
 
-Command requests offer **Allow once**, **Decline**, and **Cancel run**. Cancel run interrupts the current run; it does not undo completed changes. **Later** dismisses the popup without responding. You can reopen it with **Review requests** in the dropdown.
+Permission popups show the command, reason, working directory, and requested access. They offer Codex’s available choices: **Allow once**, **Allow for this session**, **Allow all commands of this type** (with the exact saved command prefix), network host rules, **Decline**, and **Cancel run**. Only choices supported by the request appear. Separate permission grants offer turn or session scope. File approvals show the proposed diffs and allow approval here when those details are available. Cancel run interrupts the current run; it does not undo completed changes. **Later** dismisses the popup without responding. You can reopen it with **Review requests** in the dropdown.
 
-Clarifying questions with supported choices or text fields can be answered in the popup. Asynchronous questions—such as choosing a design while Codex continues working—show a review-only popup with **Open session**. Unsupported forms, unavailable details, and requests too large for the screen also offer this fallback. No answers are chosen automatically.
+Clarifying questions with supported choices or text fields can be answered in the popup. Asynchronous questions—such as choosing a design while Codex continues working—show a review-only popup with **Open session**. Unsupported forms and unavailable details offer this fallback. Long requests scroll inside the popup. No answers are chosen automatically.
 
-Asynchronous questions remain marked for review until later user input or a new turn supersedes them. Detection depends on Codex exposing a structured question or waiting status; ordinary questions written only in chat prose are not inferred. File-change approvals must be reviewed and allowed in the original session.
+Asynchronous questions remain marked for review until later user input or a new turn supersedes them. Detection depends on Codex exposing a structured question or waiting status; ordinary questions written only in chat prose are not inferred. File approvals with unavailable diffs still require the original session.
 
 ## Settings and limitations
 

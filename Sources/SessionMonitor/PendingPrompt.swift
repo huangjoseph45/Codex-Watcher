@@ -14,7 +14,7 @@ public enum PromptRequestID: Sendable, Equatable {
 }
 
 public struct PendingPrompt: Sendable, Equatable, Identifiable {
-    public enum Kind: Sendable { case commandApproval, fileApproval, userInput, unsupported }
+    public enum Kind: Sendable { case commandApproval, fileApproval, permissionsApproval, userInput, unsupported }
     public struct Question: Sendable, Equatable, Identifiable {
         public struct Option: Sendable, Equatable {
             public let label: String
@@ -27,6 +27,16 @@ public struct PendingPrompt: Sendable, Equatable, Identifiable {
         public let allowsOther: Bool
         public let isSecret: Bool
     }
+    public struct ApprovalChoice: Sendable, Equatable, Identifiable {
+        public let id: String
+        public let label: String
+        public let detail: String?
+        let result: Data
+    }
+    public let approvalChoices: [ApprovalChoice]
+    public let permissionDetails: String?
+    public let fileChanges: String?
+    let sourceMessage: Data
     public let id: String
     public let requestID: PromptRequestID
     public let threadID: String
@@ -36,9 +46,9 @@ public struct PendingPrompt: Sendable, Equatable, Identifiable {
     public let workingDirectory: String?
     public let questions: [Question]
 
-    public var canApproveHere: Bool { kind == .commandApproval && command?.isEmpty == false }
+    public var canApproveHere: Bool { approvalChoices.contains { $0.id == "accept" } }
 
-    static func parse(_ message: [String: Any], threadID: String) -> Self? {
+    static func parse(_ message: [String: Any], threadID: String, fileItem: [String: Any]? = nil) -> Self? {
         guard let method = message["method"] as? String, let requestID = PromptRequestID(message["id"]),
               let params = message["params"] as? [String: Any], params["threadId"] as? String == threadID,
               let canonical = try? JSONSerialization.data(withJSONObject:
@@ -47,6 +57,7 @@ public struct PendingPrompt: Sendable, Equatable, Identifiable {
         switch method {
         case "item/commandExecution/requestApproval": kind = .commandApproval
         case "item/fileChange/requestApproval": kind = .fileApproval
+        case "item/permissions/requestApproval": kind = .permissionsApproval
         case "item/tool/requestUserInput": kind = .userInput
         default: kind = .unsupported
         }
@@ -76,7 +87,35 @@ public struct PendingPrompt: Sendable, Equatable, Identifiable {
                 return labels.count == options.count && Set(labels).count == labels.count
                     && labels.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             }
-        return Self(id: SHA256.hash(data: canonical).map { String(format: "%02x", $0) }.joined(),
+        let changes = fileItem.flatMap { item -> String? in
+            guard item["type"] as? String == "fileChange", item["id"] as? String == params["itemId"] as? String,
+                  let changes = item["changes"] as? [[String: Any]], !changes.isEmpty else { return nil }
+            var parts: [String] = []
+            for change in changes {
+                guard let path = change["path"] as? String, let diff = change["diff"] as? String,
+                      let kind = change["kind"] as? [String: Any], let type = kind["type"] as? String,
+                      ["add", "delete", "update"].contains(type) else { return nil }
+                let move = (kind["move_path"] as? String).map { " → " + $0 } ?? ""
+                parts.append("\(type.capitalized): \(path)\(move)\n\(diff)")
+            }
+            return parts.joined(separator: "\n\n")
+        }
+        let choices = PermissionChoices.make(kind: kind, params: params, hasFileChanges: changes != nil)
+        let detailFields = [("kind", "Action"), ("environmentId", "Environment"),
+                            ("networkApprovalContext", "Network access"), ("additionalPermissions", "Additional permissions"),
+                            ("permissions", "Requested permissions"), ("grantRoot", "Write access for this session")]
+        let details = detailFields.compactMap { key, label -> String? in
+            guard let value = params[key], !(value is NSNull),
+                  let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed]),
+                  let text = String(data: data, encoding: .utf8) else { return nil }
+            return "\(label):\n\(text)"
+        }.joined(separator: "\n\n")
+        // Bind both the request and reviewed file content to the response identity.
+        var identity = canonical
+        if let changes { identity.append(Data(changes.utf8)) }
+        return Self(approvalChoices: choices, permissionDetails: details.isEmpty ? nil : details,
+                    fileChanges: changes, sourceMessage: canonical,
+                    id: SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined(),
                     requestID: requestID, threadID: threadID,
                     kind: kind == .userInput && !validQuestions ? .unsupported : kind,
                     reason: params["reason"] as? String, command: params["command"] as? String,
@@ -95,9 +134,21 @@ public struct PendingPrompt: Sendable, Equatable, Identifiable {
         let result: [String: Any]
         switch resolution {
         case .approval(let decision):
-            guard kind == .commandApproval || kind == .fileApproval,
-                  decision != .accept || canApproveHere else { throw PromptError("Open this session to review the full request.") }
-            result = ["decision": decision.rawValue]
+            guard let choice = approvalChoices.first(where: { $0.id == decision.rawValue }) else {
+                throw PromptError("This decision is unavailable. Review the current request.")
+            }
+            guard let value = try JSONSerialization.jsonObject(with: choice.result) as? [String: Any] else {
+                throw PromptError("The permission response is unavailable. Refresh the request.")
+            }
+            result = value
+        case .approvalChoice(let id):
+            guard let choice = approvalChoices.first(where: { $0.id == id }) else {
+                throw PromptError("This decision is unavailable. Review the current request.")
+            }
+            guard let value = try JSONSerialization.jsonObject(with: choice.result) as? [String: Any] else {
+                throw PromptError("The permission response is unavailable. Refresh the request.")
+            }
+            result = value
         case .answers(let answers):
             guard accepts(answers) else { throw PromptError("Answer every question using a valid choice or response.") }
             result = ["answers": answers.mapValues { ["answers": [$0]] }]
@@ -109,6 +160,7 @@ public struct PendingPrompt: Sendable, Equatable, Identifiable {
 public enum PromptResolution: Sendable {
     public enum Approval: String, Sendable { case accept, decline, cancel }
     case approval(Approval)
+    case approvalChoice(String)
     case answers([String: String])
 }
 
@@ -131,7 +183,9 @@ public struct PromptClient: Sendable {
 
     func resolve(_ expected: PendingPrompt, with resolution: PromptResolution,
                  connection: LocalWebSocket) throws -> PromptReplyOutcome {
-        guard let current = try replay(threadID: expected.threadID, connection: connection, matching: expected.id), current.id == expected.id else {
+        let requestIdentity = SHA256.hash(data: expected.sourceMessage).map { String(format: "%02x", $0) }.joined()
+        guard let current = try replay(threadID: expected.threadID, connection: connection, matching: requestIdentity),
+              current.id == expected.id else {
             throw PromptError("This prompt changed or was already answered. Refresh or open the session.")
         }
         try connection.sendJSON(current.response(for: resolution))
@@ -170,14 +224,27 @@ public struct PromptClient: Sendable {
             inbox.ingest($0)
         }
         func matchingPrompt() -> PendingPrompt? {
-            if let identity { return inbox.pending.first { $0.id == identity } }
+            if let identity {
+                return inbox.pending.first { $0.id == identity }
+            }
             return inbox.first
         }
         while matchingPrompt() == nil {
             inbox.ingest(try connection.receiveJSON())
             if inbox.finished { return nil }
         }
-        return matchingPrompt()
+        guard let prompt = matchingPrompt(), prompt.kind == .fileApproval else { return matchingPrompt() }
+        // File approval requests contain no diff; retrieve the exact waiting item.
+        let result = try connection.request(id: 4, method: "thread/read", params: ["threadId": threadID, "includeTurns": true]) {
+            inbox.ingest($0)
+        }
+        guard inbox.pending.contains(where: { $0.id == prompt.id }),
+              let message = try JSONSerialization.jsonObject(with: prompt.sourceMessage) as? [String: Any],
+              let params = message["params"] as? [String: Any] else { return nil }
+        let fullThread = result["thread"] as? [String: Any]
+        let turn = (fullThread?["turns"] as? [[String: Any]])?.first { $0["id"] as? String == params["turnId"] as? String }
+        let item = (turn?["items"] as? [[String: Any]])?.first { $0["id"] as? String == params["itemId"] as? String }
+        return PendingPrompt.parse(message, threadID: threadID, fileItem: item)
     }
 }
 
