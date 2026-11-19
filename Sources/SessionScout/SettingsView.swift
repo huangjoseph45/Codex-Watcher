@@ -18,7 +18,7 @@ struct SettingsView: View {
                             value: store.backgroundQuestionPopupsEnabled, set: { store.setBackgroundQuestionPopupsEnabled($0) })
                     }
                     .disabled(!store.popupsEnabled)
-                    Text("Pending requests are always available in Sessions → Review requests. Popup choices do not affect sounds.")
+                    Text("Pending requests are always available in Review requests. Popup choices do not affect sounds.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 

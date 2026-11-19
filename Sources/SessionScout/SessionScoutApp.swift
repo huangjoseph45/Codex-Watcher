@@ -22,6 +22,8 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private let attentionPopover = NSPopover()
     private var attentionSessionID: String?
     private var attentionDismissTask: Task<Void, Never>?
+    private var attentionPositionTask: Task<Void, Never>?
+    private var attentionPresentationID = UUID()
     private var attentionIsCompact = false
     private var attentionIsAutomatic = false
     private var displayedPromptIdentity: String?
@@ -49,6 +51,8 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         createStatusItem()
         NotificationCenter.default.addObserver(self, selector: #selector(scheduleVisibilityCheck),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(scheduleVisibilityCheck),
+            name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
 
         popover.behavior = .transient
         let scale = store.configuration.interfaceScale
@@ -64,6 +68,9 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
                 .clipped())
         observeStatus()
         attentionPopover.behavior = .applicationDefined
+        // A request may update while the previous presentation is still closing.
+        // Avoid AppKit animating between obsolete and current anchor geometry.
+        attentionPopover.animates = false
         store.startMonitoring()
         scheduleVisibilityCheck()
     }
@@ -91,6 +98,10 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
 
     @objc private func scheduleVisibilityCheck() {
         screenChangeTask?.cancel()
+        attentionPositionTask?.cancel()
+        // Hide while the system moves menu bars between displays or Spaces.
+        // Keep the content and answers so it can be re-anchored after layout settles.
+        attentionPopover.close()
         screenChangeTask = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .milliseconds(500)) }
             catch { return }
@@ -99,7 +110,12 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
             // menu bars. Let the system move it; do not reorder it from those frames.
             self.statusItem?.isVisible = true
             self.updateStatusItem()
-            if self.store?.popupsEnabled == true { self.showNextAttention() }
+            self.screenChangeTask = nil
+            if self.attentionSessionID != nil {
+                self.positionAttentionPopover()
+            } else if self.store?.popupsEnabled == true {
+                self.showNextAttention()
+            }
         }
     }
 
@@ -140,9 +156,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         let waiting = Set(store.sessions.filter { $0.needsAttention || $0.activity == .unknown }.map(\.id))
         attentionQueue.removeAll { !waiting.contains($0) }
         if let current = attentionSessionID, !waiting.contains(current) {
-            attentionDismissTask?.cancel()
-            attentionPopover.performClose(nil)
-            attentionSessionID = nil
+            dismissAttention()
         }
         if attentionIsAutomatic, let id = attentionSessionID,
            let session = store.sessions.first(where: { $0.id == id }), !store.shouldShowPopup(for: session) {
@@ -164,10 +178,9 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     private func showNextAttention() {
         guard store?.popupsEnabled == true, !popover.isShown, !attentionPopover.isShown,
               statusItem?.isVisible == true else { return }
-        for (index, id) in attentionQueue.enumerated() {
+        for id in attentionQueue {
             guard let session = store?.sessions.first(where: { $0.id == id && $0.needsAttention }),
                   store?.shouldShowPopup(for: session) == true else { continue }
-            attentionQueue.remove(at: index)
             let permission = store?.sessions.first(where: { $0.id == id })?.activity == .waitingForApproval
             showAttention(for: id, compact: !permission, automatic: true)
             return
@@ -204,11 +217,17 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
     }
 
     private func showAttention(for sessionID: String, compact: Bool = false, automatic: Bool = false) {
-        guard let store, let button = statusItem?.button,
-              store.sessions.contains(where: { $0.id == sessionID && $0.needsAttention }) else { return }
-        popover.performClose(nil)
+        guard let store, store.sessions.contains(where: { $0.id == sessionID && $0.needsAttention }) else { return }
+        guard let anchor = statusAnchor() else {
+            // Never let AppKit choose an unrelated display for an off-screen status item.
+            if !attentionQueue.contains(sessionID) { attentionQueue.append(sessionID) }
+            retryAttentionPresentation(for: sessionID, compact: compact, automatic: automatic)
+            return
+        }
+        popover.close()
         attentionDismissTask?.cancel()
-        attentionPopover.performClose(nil)
+        attentionPositionTask?.cancel()
+        attentionPresentationID = UUID()
         attentionQueue.removeAll { $0 == sessionID }
         attentionSessionID = sessionID
         attentionIsCompact = compact
@@ -230,11 +249,11 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
                         else { self?.scheduleAttentionDismissal(sessionID: sessionID) }
                     })
                     .frame(width: settings.previewWidth, height: settings.previewHeight))
-            attentionPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            positionAttentionPopover()
             scheduleAttentionDismissal(sessionID: sessionID)
             return
         }
-        let maximumHeight = ((button.window?.screen ?? NSScreen.main)?.visibleFrame.height ?? 700) - 60
+        let maximumHeight = max(100, anchor.screen.visibleFrame.height - 60)
         let content = AttentionBubbleView(store: store, sessionID: sessionID,
             onOpenSession: { [weak self] session in self?.focusSession(session) },
             onDismiss: { [weak self] in self?.dismissAttention() })
@@ -250,7 +269,84 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         attentionPopover.contentSize = host.view.fittingSize
         NSLog("Session Scout request popup size=%@", NSStringFromSize(attentionPopover.contentSize))
         // Present without activating the app or taking focus from the user's current work.
-        attentionPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        positionAttentionPopover()
+    }
+
+    /// Status-item windows can briefly have zero or virtual coordinates during
+    /// launch, display changes, and Space transitions. Use only a real menu-bar anchor.
+    private func statusAnchor() -> (button: NSStatusBarButton, screen: NSScreen, rect: NSRect)? {
+        guard screenChangeTask == nil, statusItem?.isVisible == true, let button = statusItem?.button,
+              let window = button.window, window.isVisible, !button.isHiddenOrHasHiddenAncestor,
+              !button.bounds.isEmpty else { return nil }
+        button.layoutSubtreeIfNeeded()
+        let rect = window.convertToScreen(button.convert(button.bounds, to: nil))
+        guard [rect.minX, rect.minY, rect.width, rect.height].allSatisfy({ $0.isFinite }),
+              let screen = NSScreen.screens.first(where: { screen in
+                  let frame = screen.frame
+                  let menuBarHeight = max(NSStatusBar.system.thickness, screen.safeAreaInsets.top) + 8
+                  return frame.contains(NSPoint(x: rect.midX, y: rect.midY))
+                      && rect.maxY >= frame.maxY - menuBarHeight
+              }) else { return nil }
+        return (button, screen, rect)
+    }
+
+    private func positionAttentionPopover() {
+        guard let sessionID = attentionSessionID else { return }
+        guard let anchor = statusAnchor() else {
+            attentionPopover.close()
+            retryAttentionPresentation(for: sessionID, compact: attentionIsCompact, automatic: attentionIsAutomatic)
+            return
+        }
+        attentionPopover.show(relativeTo: anchor.button.bounds, of: anchor.button, preferredEdge: .minY)
+        correctAttentionPosition(anchorRect: anchor.rect, screen: anchor.screen)
+        let presentationID = attentionPresentationID
+        attentionPositionTask?.cancel()
+        attentionPositionTask = Task { @MainActor [weak self] in
+            // Give AppKit a layout pass, then refresh the same popover's anchor.
+            do { try await Task.sleep(for: .milliseconds(50)) }
+            catch { return }
+            guard !Task.isCancelled, let self, self.attentionPresentationID == presentationID,
+                  self.attentionSessionID == sessionID, self.attentionPopover.isShown,
+                  let anchor = self.statusAnchor() else { return }
+            self.attentionPopover.show(relativeTo: anchor.button.bounds, of: anchor.button, preferredEdge: .minY)
+            self.correctAttentionPosition(anchorRect: anchor.rect, screen: anchor.screen)
+            NSLog("Session Scout request anchor=%@ popup=%@ screen=%@", NSStringFromRect(anchor.rect),
+                  NSStringFromRect(self.attentionPopover.contentViewController?.view.window?.frame ?? .zero),
+                  NSStringFromRect(anchor.screen.frame))
+        }
+    }
+
+    private func correctAttentionPosition(anchorRect: NSRect, screen: NSScreen) {
+        guard let window = attentionPopover.contentViewController?.view.window else { return }
+        let frame = window.frame
+        // Allow AppKit's arrow and edge clamping, but reject a detached/origin placement.
+        let belowIcon = abs(frame.maxY - anchorRect.minY) <= 40
+        let aligned = anchorRect.midX >= frame.minX - 24 && anchorRect.midX <= frame.maxX + 24
+        guard !belowIcon || !aligned || !screen.frame.intersects(frame) else { return }
+        let available = screen.visibleFrame
+        let left = min(max(anchorRect.midX - frame.width / 2, available.minX),
+                       max(available.minX, available.maxX - frame.width))
+        let top = min(anchorRect.minY, available.maxY)
+        window.setFrameTopLeftPoint(NSPoint(x: left, y: top))
+        NSLog("Session Scout corrected detached request popup: %@ -> %@", NSStringFromRect(frame), NSStringFromRect(window.frame))
+    }
+
+    private func retryAttentionPresentation(for sessionID: String, compact: Bool, automatic: Bool) {
+        attentionPositionTask?.cancel()
+        attentionPositionTask = Task { @MainActor [weak self] in
+            // Retry briefly while the menu bar settles; leave the request queued if it stays hidden.
+            for _ in 0..<5 {
+                do { try await Task.sleep(for: .milliseconds(200)) }
+                catch { return }
+                guard let self, self.store?.sessions.contains(where: { $0.id == sessionID && $0.needsAttention }) == true else { return }
+                if automatic, let session = self.store?.sessions.first(where: { $0.id == sessionID }),
+                   self.store?.shouldShowPopup(for: session) != true { return }
+                if self.statusAnchor() != nil {
+                    self.showAttention(for: sessionID, compact: compact, automatic: automatic)
+                    return
+                }
+            }
+        }
     }
 
     private func scheduleAttentionDismissal(sessionID: String) {
@@ -266,7 +362,9 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
 
     private func dismissAttention() {
         attentionDismissTask?.cancel()
-        attentionPopover.performClose(nil)
+        attentionPositionTask?.cancel()
+        attentionPresentationID = UUID()
+        attentionPopover.close()
         attentionSessionID = nil
         attentionIsCompact = false
         attentionIsAutomatic = false
@@ -593,7 +691,11 @@ struct ContentView: View {
     let onReviewSession: (CodexSession) -> Void
     private var fontSize: Double { store.configuration.textSize }
     @State private var selectedTab = Tab.sessions
-    private enum Tab: String, CaseIterable { case sessions = "Sessions", settings = "Settings" }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var pendingRequestCount: Int { store.sessions.filter { $0.needsAttention }.count }
+    private enum Tab: String, CaseIterable {
+        case sessions = "Sessions", settings = "Settings"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -616,20 +718,46 @@ struct ContentView: View {
             .background(.orange.opacity(0.05))
             Divider()
 
-            Picker("Page", selection: $selectedTab) {
-                ForEach(Tab.allCases, id: \.self) { tab in Text(tab.rawValue).tag(tab) }
+            HStack(spacing: 4) {
+                ForEach(Tab.allCases, id: \.self) { tab in
+                    tabButton(tab)
+                }
             }
-            .pickerStyle(.segmented).labelsHidden().padding(12)
+            .background {
+                GeometryReader { geometry in
+                    let count = CGFloat(Tab.allCases.count)
+                    let width = max(0, (geometry.size.width - 4 * (count - 1)) / count)
+                    let index = Tab.allCases.firstIndex(of: selectedTab) ?? 0
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(.orange.opacity(0.12))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 5)
+                                .strokeBorder(.orange.opacity(0.45), lineWidth: 1)
+                        }
+                        .frame(width: width, height: geometry.size.height)
+                        .offset(x: CGFloat(index) * (width + 4))
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: selectedTab)
+                }
+                .allowsHitTesting(false)
+            }
+            .padding(4)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            .padding(12)
 
-            if selectedTab == .settings {
+            if pendingRequestCount > 0 {
+                requestNotifier
+            }
+
+            switch selectedTab {
+            case .settings:
                 SettingsView(store: store)
-            } else {
+            case .sessions:
                 sessionsContent
             }
 
             Divider()
             HStack(spacing: 12) {
-                if selectedTab == .sessions {
+                if selectedTab != .settings {
                     Button {
                         Task { await store.refresh() }
                     } label: { Label("Refresh", systemImage: "arrow.clockwise") }
@@ -652,19 +780,65 @@ struct ContentView: View {
         .tint(.orange)
     }
 
+    private func tabButton(_ tab: Tab) -> some View {
+        let selected = selectedTab == tab
+        return Button {
+            selectedTab = tab
+        } label: {
+            Text(tab.rawValue)
+                .font(.system(size: fontSize - 3, weight: selected ? .semibold : .regular))
+                .frame(maxWidth: .infinity, minHeight: 32)
+                .contentShape(Rectangle())
+                .foregroundStyle(selected ? Color.orange : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .help(tab.rawValue)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var requestNotifier: some View {
+        let hasRequests = pendingRequestCount > 0
+        return Button {
+            if let session = store.sessions.first(where: { $0.needsAttention }) {
+                onReviewSession(session)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: hasRequests ? "exclamationmark.bubble.fill" : "checkmark.bubble")
+                    .font(.system(size: fontSize + 2))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Review requests").fontWeight(.semibold)
+                    Text(hasRequests ? "Permission requests and questions need your attention." : "No pending requests")
+                        .font(.system(size: fontSize - 3)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Text("\(pendingRequestCount)")
+                    .font(.system(size: fontSize - 2, weight: .semibold)).monospacedDigit()
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(hasRequests ? Color.orange.opacity(0.18) : Color.secondary.opacity(0.1), in: Capsule())
+                Image(systemName: "chevron.right").font(.system(size: fontSize - 4, weight: .semibold))
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(hasRequests ? Color.orange : Color.secondary)
+            .background(hasRequests ? Color.orange.opacity(0.08) : Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(hasRequests ? Color.orange.opacity(0.4) : Color.secondary.opacity(0.15), lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .opacity(hasRequests ? 1 : 0.55)
+        }
+        .buttonStyle(.plain)
+        .disabled(!hasRequests)
+        .help(hasRequests ? "Review \(pendingRequestCount) pending request(s)" : "No pending requests")
+        .accessibilityLabel(hasRequests ? "Review requests, \(pendingRequestCount) pending" : "Review requests, no pending requests")
+        .buttonHoverFeedback()
+        .padding(.horizontal, 12).padding(.bottom, 12)
+    }
+
     private var sessionsContent: some View {
         VStack(spacing: 0) {
-            if let waiting = store.sessions.first(where: { $0.needsAttention }) {
-                Button {
-                    onReviewSession(waiting)
-                } label: {
-                    Label("Review requests (\(store.sessions.filter { $0.needsAttention }.count))", systemImage: "exclamationmark.bubble")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain).foregroundStyle(.orange).padding(12).background(.orange.opacity(0.08))
-                .buttonHoverFeedback()
-            }
-
             if let warning = store.configurationWarning {
                 banner(warning, symbol: "exclamationmark.triangle", color: .orange)
             }
@@ -707,7 +881,9 @@ struct ContentView: View {
                         .buttonHoverFeedback(highlightPadding: 3)
                         .contextMenu {
                             if session.needsAttention {
-                                Button("Review Request") { onReviewSession(session) }
+                                Button("Review Request") {
+                                    onReviewSession(session)
+                                }
                             }
                             Button("Copy Session ID") {
                                 NSPasteboard.general.clearContents()
